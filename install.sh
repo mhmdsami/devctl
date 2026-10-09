@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-REPO="https://github.com/mhmdsami/devctrl.git"
+REPO="https://github.com/mhmdsami/devctl.git"
 SRC="${DEVCTL_SRC:-$HOME/.devctl/src}"
 BIN="${DEVCTL_BIN:-$HOME/.local/bin}"
 
