@@ -1,11 +1,12 @@
 ---
 name: devctl
-description: Use devctl for anything about the user's local dev services, stacks, ports, URLs, or logs in ~/dev/headout. Never guess ports or curl localhost blindly.
+description: Use devctl to inspect and manage local development services, worktrees, stacks, ports, URLs, and logs. Read devctl state before acting.
+tags: development, tooling
 ---
 
 # devctl
 
-`devctl` (/opt/homebrew/bin/devctl) runs the user's local dev services. The service graph lives in `~/dev/projects/devctl/devctl.config.json`. Each git worktree gets its own port. A worktree name shared across services is a **stack**. Services run inside herdr tabs. Never kill tabs or ports yourself; devctl refuses to kill processes it doesn't own.
+`devctl` runs local development services. The service graph comes from `DEVCTL_CONFIG`, or `devctl.config.jsonc` / `devctl.config.json` in the devctl installation. Each git worktree gets its own port. A worktree name shared across services is a **stack**. Services run inside herdr tabs. Never kill tabs or ports yourself; devctl refuses to kill processes it doesn't own.
 
 ## Read state first, act second
 
@@ -21,11 +22,11 @@ devctl stack ls --json          # stack definitions + which members are running
 ## Starting and stopping
 
 ```sh
-devctl up payload/ft-my-feature        # start one service; reuses it if already running
+devctl up api/ft-my-feature        # start one service; reuses it if already running
 devctl up ft-my-feature                # start the whole stack with that branch name (deps auto-start)
 devctl up                              # service for cwd, else the daily stack (same as up --all)
 devctl up --dry-run                    # print the start plan (order, ports, commands) without starting
-devctl down payload/ft-my-feature      # stop one service
+devctl down api/ft-my-feature      # stop one service
 devctl down ft-my-feature              # stop a stack's members
 ```
 
@@ -37,13 +38,13 @@ Never run `devctl down --all` or `devctl kill`. That's the kill switch for every
 
 If `up` fails with "port occupied, re-run with --force", report it to the user instead of passing `--force` yourself. `--force` kills whatever holds the port.
 
-mongo is a shared service: `devctl up mongo` and `devctl down mongo`. It has no worktrees or branches. It starts automatically via the graph when payload starts.
+mongo is a shared service: `devctl up mongo` and `devctl down mongo`. It has no worktrees or branches. It starts automatically via the graph when api starts.
 
 ## Logs and URLs
 
 ```sh
-devctl logs kirby/ft-my-feature --lines 100    # last 100 lines, default 50
-devctl logs kirby/ft-my-feature --follow       # tails, blocking; agents should use --lines
+devctl logs web/ft-my-feature --lines 100    # last 100 lines, default 50
+devctl logs web/ft-my-feature --follow       # tails, blocking; agents should use --lines
 ```
 
 URLs come from `status --json`. `portlessUrl` looks like `https://<branch>.<service>.localhost:1355`; the fallback is `http://localhost:<port>`. Don't construct them by hand. Don't curl services to check health. `devctl status --check` does that.
@@ -52,7 +53,7 @@ URLs come from `status --json`. `portlessUrl` looks like `https://<branch>.<serv
 
 ```sh
 devctl env test|prod                   # external API mode, restarts affected services
-devctl use payload ft-my-feature       # point payload-dependents at a worktree; or: use payload test|prod
+devctl use api ft-my-feature       # point api-dependents at a worktree; or: use api test|prod
 ```
 
 Both restart running services. Confirm intent first. Stack member overrides win over `use`.
@@ -73,4 +74,4 @@ the debug agent. The agent model is set with `devctl config set debug.model <nam
 
 ## Adding a service (config)
 
-Services live in `devctl.config.json` in `~/dev/projects/devctl`. A service declares `repo`, `basePort`, `command` (supports `${port}`), and optionally `provides`, `remoteProvides`, `wiring`, `dependsOn`, `shared`. See `devctl config show` or the repo README for the schema. Config errors fail at load, so run any devctl command after editing to catch mistakes.
+Services live in the resolved devctl configuration. A service declares `repo`, `basePort`, `command` (supports `${port}`), and optionally `provides`, `remoteProvides`, `wiring`, `dependsOn`, `shared`. See `devctl config show` or the repo README for the schema. Config errors fail at load, so run any devctl command after editing to catch mistakes.
