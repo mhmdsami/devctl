@@ -1,6 +1,8 @@
 import { getPreferenceValues } from '@raycast/api'
-import { execFile, spawn } from 'child_process'
+import { execFile, execFileSync, spawn } from 'child_process'
 import fs from 'fs'
+import os from 'os'
+import path from 'path'
 
 interface Preferences {
   devctlPath: string
@@ -54,15 +56,66 @@ export interface TStackStatus {
   >
 }
 
+const BINARY_NAME = 'devctl'
+
+let cachedLoginPath: string | null | undefined
+
+function loginPath(): string | null {
+  if (cachedLoginPath !== undefined) return cachedLoginPath
+  try {
+    const shell = process.env.SHELL ?? '/bin/zsh'
+    cachedLoginPath = execFileSync(shell, ['-lic', 'printenv PATH'], { encoding: 'utf8', timeout: 5_000 }).trim() || null
+  } catch {
+    cachedLoginPath = null
+  }
+  return cachedLoginPath
+}
+
+function binaryDirs(): string[] {
+  const dirs = [path.join(os.homedir(), '.local', 'bin'), '/opt/homebrew/bin', '/usr/local/bin']
+  for (const entry of (loginPath() ?? process.env.PATH ?? '').split(':')) {
+    if (entry) dirs.push(entry)
+  }
+  return [...new Set(dirs)]
+}
+
+function expandHome(value: string): string {
+  if (value === '~') return os.homedir()
+  if (value.startsWith('~/')) return path.join(os.homedir(), value.slice(2))
+  return value
+}
+
+function isExecutable(file: string): boolean {
+  try {
+    fs.accessSync(file, fs.constants.X_OK)
+    return fs.statSync(file).isFile()
+  } catch {
+    return false
+  }
+}
+
+function resolveBinary(): string | null {
+  for (const dir of binaryDirs()) {
+    const candidate = path.join(dir, BINARY_NAME)
+    if (isExecutable(candidate)) return candidate
+  }
+  return null
+}
+
 export function binaryPath(): string {
   const { devctlPath } = getPreferenceValues<Preferences>()
-  return devctlPath.trim()
+  const configured = devctlPath?.trim()
+  if (configured) {
+    const expanded = expandHome(configured)
+    if (isExecutable(expanded)) return expanded
+  }
+  return resolveBinary() ?? (configured ? expandHome(configured) : BINARY_NAME)
 }
 
 export function commandEnvironment(): NodeJS.ProcessEnv {
   return {
     ...process.env,
-    PATH: ['/opt/homebrew/bin', '/usr/local/bin', process.env.PATH].filter(Boolean).join(':'),
+    PATH: binaryDirs().join(':'),
   }
 }
 

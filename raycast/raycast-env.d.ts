@@ -8,7 +8,7 @@
 /* eslint-disable @typescript-eslint/ban-types */
 
 type ExtensionPreferences = {
-  /** devctl Path - Absolute path to the devctl executable. */
+  /** devctl Path - Absolute path to the devctl executable. Defaults to the install script location. */
   "devctlPath": string,
   /** Editor App - App name used by Open in Editor (passed to open -a). */
   "editorApp": string

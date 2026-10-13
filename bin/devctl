@@ -3,6 +3,16 @@ PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
 export PATH
 LC_ALL=C
 export LC_ALL
+if ! command -v node >/dev/null 2>&1; then
+  LOGIN_PATH="$("${SHELL:-/bin/zsh}" -lic 'printenv PATH' 2>/dev/null || true)"
+  [ -n "$LOGIN_PATH" ] && PATH="$LOGIN_PATH:$PATH"
+  if ! command -v node >/dev/null 2>&1; then
+    for dir in "$HOME"/.nvm/versions/node/*/bin; do
+      [ -x "$dir/node" ] && PATH="$dir:$PATH"
+    done
+  fi
+  export PATH
+fi
 SOURCE="${BASH_SOURCE[0]}"
 while [ -L "$SOURCE" ]; do
   DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"

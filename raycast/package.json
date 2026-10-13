@@ -15,10 +15,10 @@
     {
       "name": "devctlPath",
       "title": "devctl Path",
-      "description": "Absolute path to the devctl executable.",
+      "description": "Absolute path to the devctl executable. Defaults to the install script location.",
       "type": "textfield",
       "required": true,
-      "default": "/opt/homebrew/bin/devctl"
+      "default": "~/.local/bin/devctl"
     },
     {
       "name": "editorApp",
