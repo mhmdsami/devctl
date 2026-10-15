@@ -17,6 +17,10 @@ importers:
       typescript:
         specifier: ^5.6.0
         version: 5.9.3
+    optionalDependencies:
+      portless:
+        specifier: ^0.15.8
+        version: 0.15.8
 
 packages:
 
@@ -189,6 +193,12 @@ packages:
     engines: {node: ^8.16.0 || ^10.6.0 || >=11.0.0}
     os: [darwin]
 
+  portless@0.15.8:
+    resolution: {integrity: sha512-kzGoG4xLsEytczl7O/COZaBwSAOKsWsZDxHv7/iFHKIC0X71OonpgbsQw58CGO29RklIHIx6yLM31TJMnTtPEw==}
+    engines: {node: '>=24'}
+    os: [darwin, linux, win32]
+    hasBin: true
+
   tsx@4.23.13:
     resolution: {integrity: sha512-BL5MGkRln6aDYhb0xbQlEAGw743BaZYWdbWtdJOBriYJboKgUUYCadFp2/FpBBZquBC/ezNBn7wMMPx7FDZUDw==}
     engines: {node: '>=18.0.0'}
@@ -316,6 +326,9 @@ snapshots:
       '@esbuild/win32-x64': 0.28.2
 
   fsevents@2.3.3:
+    optional: true
+
+  portless@0.15.8:
     optional: true
 
   tsx@4.23.13:

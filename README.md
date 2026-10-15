@@ -31,6 +31,7 @@ devctl context [stack]                   # markdown status of a stack, for agent
 devctl diagnose <service>/<worktree>     # hand a service's recent logs to the debug agent
 devctl doctor [--json]                   # config, binaries, ports, env files, stale state, branch conflicts
 devctl attach [workspace]
+devctl portless on|off|status              # start/stop the portless proxy (named URLs), show routes
 devctl completion bash|zsh
 ```
 
@@ -60,7 +61,9 @@ worktrees never moves an existing one's port. Named URLs follow:
 roles - services form a **dependency graph**:
 
 - `provides` - values a service exposes when it runs locally (templates with `${port}`, `${inspectPort}`,
-  `${dnsName}`, `${portlessUrl}`)
+  `${dnsName}`, `${portlessUrl}`, `${origin}`)
+- `origin` - the service's public URL: `https://<dnsName>.localhost` when portless is on,
+  `http://localhost:<port>` when it is off or not installed, so links work either way
 - `remoteProvides` - where those values come from when dependents target `test`/`prod` (read from a service's env base file)
 - `wiring` - `"ENV_KEY": "<service>.<value>"` - injects a provided value into the consumer's env; each entry is a graph edge
 - `dependsOn` - extra edges without env wiring (startup order only)
@@ -114,7 +117,7 @@ one `wiring` line. Cycles are rejected at config load.
       "repo": "my-api",                  // dir under reposRoot
       "basePort": 5000,                  // per-worktree: +10, +11 …
       "command": "./node_modules/.bin/mydev -p ${port}",
-      "env": { "MY_FLAG": "1" },         // ${port}/${inspectPort}/${dnsName}/${portlessUrl} interpolated
+      "env": { "MY_FLAG": "1" },         // ${port}/${inspectPort}/${dnsName}/${portlessUrl}/${origin} interpolated
       "healthTimeoutMs": 120000,
       "install": "pnpm install",         // optional; auto-detected from the lockfile otherwise
       "dependsOn": ["mongo", "redis"],   // exactly the shared services this one needs
@@ -152,9 +155,14 @@ one `wiring` line. Cycles are rejected at config load.
   `envExternals.<mode>`, then `wiring` (via `.env.local`), then the stack override file
   `~/.devctl/env/<stack>/<service>.env`. `devctl env show <service>[/<worktree>]` prints the
   result with the source of every key; `devctl env set|unset|edit` maintain the override file
-- `${dnsName}` is the service's portless name (`<branch>.<service>`), so services that publish
-  their own URL (`PAYLOAD_PUBLIC_SERVER_URL: "https://${dnsName}.localhost"`) stay same-origin
-  when you browse them through portless - no CORS
+- `${dnsName}` is the service's portless name (`<branch>.<service>`). Use `${origin}` when a
+  service publishes its own URL (`PAYLOAD_PUBLIC_SERVER_URL: "${origin}"`) so it stays same-origin
+  when browsed through portless - no CORS - and falls back to `http://localhost:<port>` when
+  portless is off
+- portless is optional and ships as an optional dependency (needs Node 24+). `devctl portless on`
+  starts the proxy and registers a route per running service; `off` stops it and reverts URLs to
+  localhost ports; `status` shows the mode, proxy, and routes. Without a usable portless, devctl
+  uses plain ports
 
 ## Raycast extension
 

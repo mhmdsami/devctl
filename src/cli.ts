@@ -12,7 +12,7 @@ import { loadState, saveState, STATE_FILE, type TStackState, type TDevctlState }
 import { depsOf, dependentsOf, hasWiring, planStack, providersOf, resolveEnv, type TStackPlan } from './stacks'
 import { overrideFile, setOverride, unsetOverride } from './envOverrides'
 import { discoverStacks, resolveStack } from './stackRegistry'
-import { alias as portlessAlias, dnsName as portlessDnsName, portlessAvailable, portlessProxyUp, portlessUrl, removeAlias as portlessRemoveAlias } from './portless'
+import { activeRoutes, alias as portlessAlias, dnsName as portlessDnsName, hasRoute, namedUrlsEnabled, portlessAvailable, portlessBin, portlessProxyUp, portlessUrl, proxyPort, removeAlias as portlessRemoveAlias, startProxy, stopProxy } from './portless'
 import { sleep, colors, setQuiet, out, quiet, setColorEnabled } from './util'
 import { parseArgs, flag, opt, positional, type TArgs, UsageError } from './args'
 import { tailFile } from './logtail'
@@ -48,10 +48,10 @@ async function tabAlive(stack: TStackState): Promise<boolean> {
   return refAlive({ ...stack.ref, port: stack.port })
 }
 
-async function stackStatus(stack: TStackState): Promise<{ alive: boolean; listening: boolean; portlessUrl: string | null }> {
+async function stackStatus(stack: TStackState, named: boolean): Promise<{ alive: boolean; listening: boolean; portlessUrl: string | null }> {
   const listening = await tcpAlive(stack.port)
   const alive = isShared(stack.repo) ? listening : await tabAlive(stack)
-  const portlessLink = stack.portlessName && !isShared(stack.repo) ? await portlessUrl(stack.portlessName) : null
+  const portlessLink = named && stack.portlessName && !isShared(stack.repo) ? await portlessUrl(stack.portlessName) : null
   return { alive, listening, portlessUrl: portlessLink }
 }
 
@@ -133,10 +133,8 @@ async function ensureStack(
     }
     state.stacks[entry.key] = entry
     saveState(state)
-    if (!isShared(repo) && portlessAvailable()) {
-      try {
-        portlessAlias(portlessName, wt.port)
-      } catch {}
+    if (!isShared(repo) && namedUrlsEnabled(state)) {
+      portlessAlias(portlessName, wt.port)
     }
   }
 
@@ -346,6 +344,9 @@ async function cmdUp(a: TArgs): Promise<void> {
   if (json) setQuiet(true)
   requireRunner()
   const state = loadState()
+  if (namedUrlsEnabled(state) && !(await portlessProxyUp())) {
+    out(colors.yellow('~ portless proxy is down - named URLs will not resolve until `devctl portless on`'))
+  }
   const target = a.positionals[0]
   const force = flag(a, 'force')
   let targets: Array<{ repo: TRepoKey; branchOrName: string }>
@@ -757,11 +758,12 @@ async function cmdStatus(a: TArgs): Promise<void> {
   const json = flag(a, 'json')
   const check = flag(a, 'check')
   const state = loadState()
+  const named = namedUrlsEnabled(state)
   const rows = await Promise.all(
     Object.values(state.stacks).map(async (s) => ({
       ...s,
       stackLabel: s.stack ? state.stackDefs[s.stack]?.label : undefined,
-      ...(await stackStatus(s)),
+      ...(await stackStatus(s, named)),
     })),
   )
 
@@ -868,15 +870,26 @@ async function cmdDoctor(a: TArgs): Promise<void> {
   add('runner', !cfg.herdr.enabled || binary('herdr') ? 'ok' : 'error', cfg.herdr.enabled ? (binary('herdr') ? 'herdr available' : 'herdr enabled but not found') : 'plain detached process mode')
   const portlessCli = portlessAvailable()
   const portlessProxy = portlessCli ? await portlessProxyUp() : false
+  const portlessOn = portlessCli && state.portless !== false
   add(
     'portless',
-    portlessCli && portlessProxy ? 'ok' : 'warn',
+    portlessCli && portlessProxy && portlessOn ? 'ok' : 'warn',
     !portlessCli
-      ? 'not installed; localhost aliases will be unavailable'
-      : portlessProxy
-        ? 'proxy listening on 443/1355'
-        : 'CLI present but no proxy on 443/1355 - run `portless proxy start` for named URLs',
+      ? 'not installed; using http://localhost:<port>'
+      : !portlessOn
+        ? 'disabled; run `devctl portless on` for named URLs'
+        : portlessProxy
+          ? `proxy up on ${proxyPort()}`
+          : 'proxy down; run `devctl portless on` for named URLs',
   )
+  if (portlessCli && portlessProxy && portlessOn) {
+    const missing = Object.values(state.stacks).filter(
+      (entry) => !isShared(entry.repo) && entry.portlessName && !hasRoute(`${entry.portlessName}.localhost`),
+    )
+    if (missing.length > 0) {
+      add('portless:routes', 'warn', `${missing.length} running service(s) without a route - re-run \`devctl up <stack>\` to re-register`)
+    }
+  }
 
   for (const [service, serviceConfig] of Object.entries(cfg.services)) {
     const dir = repoDir(service)
@@ -928,6 +941,75 @@ async function cmdDoctor(a: TArgs): Promise<void> {
     }
   }
   if (checks.some((check) => check.status === 'error')) process.exitCode = 1
+}
+
+async function cmdPortless(a: TArgs): Promise<void> {
+  const sub = a.positionals[0]
+  const json = flag(a, 'json')
+  if (json) setQuiet(true)
+  const bin = portlessBin()
+  const state = loadState()
+
+  if (!sub || sub === 'status') {
+    const available = portlessAvailable()
+    const proxyUp = available ? await portlessProxyUp() : false
+    const routes = available ? [...activeRoutes()] : []
+    const enabled = namedUrlsEnabled(state)
+    if (json) {
+      console.log(JSON.stringify({ installed: Boolean(bin), usable: available, bin, enabled, proxyUp, port: proxyPort(), routes }, null, 2))
+      return
+    }
+    out(`portless: ${available ? 'installed' : bin ? 'installed but not runnable (needs Node 24+)' : 'not installed'}`)
+    if (bin) out(colors.dim(`  ${bin}`))
+    out(`  named URLs: ${enabled ? 'on' : 'off'}`)
+    out(`  proxy: ${proxyUp ? `up on ${proxyPort()}` : 'down'}`)
+    out(`  routes: ${routes.length}`)
+    for (const route of routes) out(colors.dim(`    https://${route}`))
+    return
+  }
+
+  if (sub !== 'on' && sub !== 'off') {
+    throw new UsageError('usage: devctl portless on [--port N] [--no-restart] [--force] | off [--no-restart] [--force] | status [--json]')
+  }
+  if (sub === 'on' && !portlessAvailable()) {
+    throw new Error('portless is not usable - install it with `pnpm install` in the devctl checkout (needs Node 24+)')
+  }
+
+  if (sub === 'on') {
+    const portRaw = opt(a, 'port')
+    const port = portRaw === undefined ? undefined : Number(portRaw)
+    if (port !== undefined && (!Number.isInteger(port) || port <= 0 || port > 65535)) throw new UsageError('--port must be between 1 and 65535')
+    startProxy(port)
+  } else {
+    stopProxy()
+  }
+  state.portless = sub === 'on'
+  saveState(state)
+
+  const running = Object.values(state.stacks).filter(
+    (entry): entry is TStackState & { portlessName: string } => !isShared(entry.repo) && Boolean(entry.portlessName),
+  )
+  for (const entry of running) {
+    if (sub === 'on') portlessAlias(entry.portlessName, entry.port)
+    else portlessRemoveAlias(entry.portlessName)
+  }
+
+  const restarted: string[] = []
+  if (running.length > 0 && !flag(a, 'no-restart')) {
+    requireRunner()
+    for (const entry of running) {
+      await restartStack(entry.key, state, flag(a, 'force'))
+      restarted.push(entry.key)
+    }
+  }
+
+  const detail = restarted.length > 0
+    ? `; restarted ${restarted.join(', ')}`
+    : running.length > 0
+      ? '; re-run `devctl up <stack>` to refresh service env'
+      : ''
+  out(colors.green(`portless ${sub}${detail}`))
+  emitMutationResult(json, { ok: true, portless: sub === 'on', routes: running.length, restarted })
 }
 
 function cmdAttach(a: TArgs): void {
@@ -1084,7 +1166,7 @@ function cmdContext(a: TArgs): void {
   console.log(lines.join('\n'))
 }
 
-const COMPLETION_COMMANDS = 'up down kill restart status which env use attach logs doctor config stack completion --version --help'
+const COMPLETION_COMMANDS = 'up down kill restart status which env use attach portless logs doctor config stack completion --version --help'
 
 function cmdCompletion(a: TArgs): void {
   const shell = a.positionals[0]
@@ -1323,6 +1405,7 @@ const GLOBAL_USAGE = `usage: devctl <command>
   context [stack]                markdown status of a stack (default: current) for pasting to agents
   doctor [--json]                check config, binaries, repos, ports, env files, and state
   attach [workspace]             focus a herdr workspace
+  portless on|off|status         start/stop the portless proxy (named URLs) and register routes
   completion bash|zsh            print shell completion script
   --version                      print devctl version
 
@@ -1385,6 +1468,15 @@ const HELP: Record<string, string> = {
 
   Prints markdown describing the stack (services, targets, state, URLs) - paste it into an agent.
   Pass a stack name to target one.`,
+  portless: `usage: devctl portless on [--port N] [--no-restart] [--force]
+              devctl portless off [--no-restart] [--force]
+              devctl portless status [--json]
+
+  on starts the portless proxy and registers a route per running service; off stops the proxy
+  and removes routes, so named URLs are replaced by http://localhost:<port>. Both restart the
+  running services so their env reflects the mode, unless --no-restart is passed.
+  status prints whether portless is installed, whether named URLs are on, and the active routes.
+  Without portless, devctl stays on plain localhost ports.`,
   completion: `usage: devctl completion bash|zsh
 
   Print a completion script. zsh: eval "$(devctl completion zsh)". bash: eval "$(devctl completion bash)".`,
@@ -1447,6 +1539,8 @@ async function runCommand(rawArgv: string[]): Promise<void> {
           : cmdDown(parseArgs(rest, { boolean: ['all', 'yes', 'force', 'json'] }, 'stack down'))
       }
       return cmdStack(args)
+    case 'portless':
+      return cmdPortless(parseArgs(args, { string: ['port'], boolean: ['json', 'force', 'no-restart'] }, 'portless'))
     case 'attach':
       return cmdAttach(parseArgs(args, {}, 'attach'))
     case 'logs':

@@ -34,11 +34,11 @@ const cfg = {
       basePort: 3000,
       command: 'true',
       dependsOn: ['mongo'],
-      provides: { url: 'http://localhost:${port}/api', selfUrl: 'https://${dnsName}.localhost' },
+      provides: { url: 'http://localhost:${port}/api', selfUrl: 'https://${dnsName}.localhost', origin: '${origin}' },
       remoteProvides: { url: { from: 'web', envKey: 'API_URL' } },
       healthTimeoutMs: 1000,
     },
-    web: { repo: 'web', basePort: 3100, command: 'true', wiring: { API_URL: 'api.url', SELF_URL: 'api.selfUrl' }, healthTimeoutMs: 1000 },
+    web: { repo: 'web', basePort: 3100, command: 'true', wiring: { API_URL: 'api.url', SELF_URL: 'api.selfUrl', SELF_ORIGIN: 'api.origin' }, healthTimeoutMs: 1000 },
   },
 }
 fs.writeFileSync(path.join(root, 'devctl.config.json'), JSON.stringify(cfg, null, 2))
@@ -73,6 +73,10 @@ assert.strictEqual(remote.API_URL, 'https://api.test.example.com')
 const local = resolveWiring({ env: 'test', targets: { web: 'api/head' } }, 'web')
 assert.strictEqual(local.API_URL, 'http://localhost:3000/api')
 assert.strictEqual(local.SELF_URL, 'https://head.api.localhost')
+
+const portsOnly = resolveWiring({ env: 'test', targets: { web: 'api/head' }, portless: false }, 'web')
+assert.strictEqual(portsOnly.SELF_ORIGIN, 'http://localhost:3000')
+assert.strictEqual(portsOnly.SELF_URL, 'https://head.api.localhost')
 
 const basePort = 6007
 const running = { 'espeon/ft-configurable-text-banner': 6017, 'espeon/ho-lfc-qa': 6018 }

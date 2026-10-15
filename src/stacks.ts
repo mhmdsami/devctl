@@ -3,17 +3,21 @@ import path from 'path'
 import { parseEnvFile, seedEnvFiles, writeEnvOverlay } from './envfile'
 import { interpolate, loadConfig, repoDir, type TDevctlConfig, type TServiceConfig } from './config'
 import { isShared, listWorktrees, type TRepoKey, type TWorktree } from './registry'
-import { dnsName as portlessDnsName } from './portless'
+import { dnsName as portlessDnsName, namedUrl, namedUrlsEnabled } from './portless'
 import { readOverrides } from './envOverrides'
 import type { TDevctlState, TStackDef } from './state'
 
-function templateVars(repo: TRepoKey, wt: TWorktree): Record<string, string | number> {
+type TModeState = Pick<TDevctlState, 'env' | 'targets'> & { portless?: boolean }
+
+function templateVars(repo: TRepoKey, wt: TWorktree, named: boolean): Record<string, string | number> {
   const name = portlessDnsName(repo, wt)
+  const origin = named ? namedUrl(name) : `http://localhost:${wt.port}`
   return {
     port: wt.port,
     inspectPort: wt.inspectPort ?? '',
     dnsName: name,
-    portlessUrl: `https://${name}.localhost`,
+    portlessUrl: origin,
+    origin,
   }
 }
 
@@ -104,7 +108,7 @@ function remoteValue(cfg: TDevctlConfig, mode: 'test' | 'prod', provider: string
 }
 
 export function resolveWiring(
-  state: Pick<TDevctlState, 'env' | 'targets'>,
+  state: TModeState,
   consumer: string,
   stackDef?: TStackDef,
 ): Record<string, string | null> {
@@ -121,7 +125,7 @@ export function resolveWiring(
     const wt = listWorktrees(provider).find((w) => w.name === target.name)
     if (!wt) throw new Error(`No ${provider} worktree for "${target.name}"`)
     const template = serviceOf(provider).provides?.[value]
-    values[envKey] = template ? interpolate(template, templateVars(provider, wt)) : null
+    values[envKey] = template ? interpolate(template, templateVars(provider, wt, namedUrlsEnabled(state))) : null
   }
   return values
 }
@@ -147,12 +151,12 @@ export function depsOf(
 export function planStack(
   repo: TRepoKey,
   wt: TWorktree,
-  state: Pick<TDevctlState, 'env' | 'targets'>,
+  state: TModeState,
   stackDef?: TStackDef,
 ): TStackPlan {
   const svc = serviceOf(repo)
   if (!svc.shared) seedEnvFiles(wt.path, repoDir(repo))
-  const vars = templateVars(repo, wt)
+  const vars = templateVars(repo, wt, namedUrlsEnabled(state))
   const { env } = resolveEnv(repo, wt, state, stackDef, { write: true })
   return {
     path: wt.path,
@@ -177,13 +181,13 @@ export interface TEnvResolution {
 export function resolveEnv(
   repo: TRepoKey,
   wt: TWorktree,
-  state: Pick<TDevctlState, 'env' | 'targets'>,
+  state: TModeState,
   stackDef?: TStackDef,
   opts: { write?: boolean } = {},
 ): TEnvResolution {
   const cfg = loadConfig()
   const svc = serviceOf(repo)
-  const vars = templateVars(repo, wt)
+  const vars = templateVars(repo, wt, namedUrlsEnabled(state))
   const baseFile = cfg.envBaseFiles[state.env]
   const basePath = path.join(wt.path, baseFile)
   const base: Record<string, string> = !svc.shared && fs.existsSync(basePath) ? parseEnvFile(fs.readFileSync(basePath, 'utf8')) : {}

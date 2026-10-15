@@ -44,6 +44,7 @@ export interface TDevctlState {
   targets: Record<string, string>
   stackDefs: Record<string, TStackDef>
   slots: Record<string, number>
+  portless?: boolean
 }
 
 function emptyState(): TDevctlState {
@@ -93,6 +94,7 @@ function normalize(state: TDevctlState & { payloadTargets?: Record<string, strin
     targets: state.targets ?? state.payloadTargets ?? {},
     stackDefs: state.stackDefs ?? {},
     slots: state.slots ?? {},
+    portless: state.portless,
   }
 }
 
