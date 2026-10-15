@@ -2,6 +2,7 @@ import { Clipboard, confirmAlert, Icon, MenuBarExtra, open, showToast, Toast } f
 import { run, runLongCommand, serviceLogs } from './lib/devctl'
 import { useDevctlStatus } from './lib/useDevctlStatus'
 import { useStacks } from './lib/useStacks'
+import { usePortless } from './lib/usePortless'
 import { toastSafely, updateToast, withToast } from './lib/actions'
 import { serviceStateLabel, stackView, type ServiceState } from './lib/stackView'
 
@@ -16,6 +17,7 @@ const stateIcon = (state: ServiceState | 'external') => {
 export default function Menubar() {
   const { status, error: statusError, isLoading, reload: reloadStatus } = useDevctlStatus(5_000)
   const { stacks, error: stacksError, reload: reloadStacks } = useStacks(15_000)
+  const { portless, error: portlessError } = usePortless(15_000)
   const rows = (stacks?.stacks ?? []).map((stack) => stackView(stack, status))
   const failed = rows.filter((row) => row.state === 'failed').length
   const starting = rows.filter((row) => row.state === 'starting').length
@@ -137,6 +139,34 @@ export default function Menubar() {
               onAction={() => withToast(`Switching to ${environment}`, ['env', environment], reload)}
             />
           ))}
+        </MenuBarExtra.Submenu>
+      </MenuBarExtra.Section>
+      <MenuBarExtra.Section title="Network">
+        <MenuBarExtra.Submenu
+          icon={portless?.enabled && portless.proxyUp ? { source: Icon.Globe, tintColor: '#34c759' } : Icon.Globe}
+          title={`Portless: ${portless ? (portless.enabled ? (portless.proxyUp ? 'on' : 'on, proxy down') : 'off') : portlessError ? 'error' : 'Loading…'}`}
+        >
+          {portlessError && <MenuBarExtra.Item icon={Icon.ExclamationMark} title={portlessError} />}
+          {!portlessError && portless && !portless.usable && (
+            <MenuBarExtra.Item icon={Icon.Circle} title="Not installed - using localhost ports" />
+          )}
+          {!portlessError && portless?.usable && (
+            <MenuBarExtra.Item icon={Icon.CircleFilled} title={`Named URLs: ${portless.enabled ? 'On' : 'Off'}`} />
+          )}
+          {!portlessError && portless?.usable && (
+            <MenuBarExtra.Item
+              icon={portless.proxyUp ? Icon.CircleFilled : Icon.Circle}
+              title={`Proxy: ${portless.proxyUp ? `up on ${portless.port}` : 'down'}`}
+            />
+          )}
+          {!portlessError && portless?.usable && (
+            <MenuBarExtra.Item icon={Icon.Link} title={`Routes: ${portless.routes.length}`} />
+          )}
+          {!portlessError &&
+            portless?.usable &&
+            portless.routes.map((route) => (
+              <MenuBarExtra.Item key={route} icon={Icon.Globe} title={route} onAction={() => open(`https://${route}`)} />
+            ))}
         </MenuBarExtra.Submenu>
       </MenuBarExtra.Section>
       <MenuBarExtra.Section title="Actions">

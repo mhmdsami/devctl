@@ -56,6 +56,16 @@ export interface TStackStatus {
   >
 }
 
+export interface TPortlessStatus {
+  installed: boolean
+  usable: boolean
+  bin: string | null
+  enabled: boolean
+  proxyUp: boolean
+  port: number
+  routes: string[]
+}
+
 const BINARY_NAME = 'devctl'
 
 let cachedLoginPath: string | null | undefined
@@ -159,6 +169,10 @@ export async function stacksJson(): Promise<{ stacks: TStackInfo[] }> {
 
 export async function worktrees(): Promise<TWorktreeInfo[]> {
   return JSON.parse(await run(['which', '--json']))
+}
+
+export async function portlessStatusJson(): Promise<TPortlessStatus> {
+  return JSON.parse(await run(['portless', 'status', '--json']))
 }
 
 export function serviceLogs(target: string, lines = 100): Promise<string> {
