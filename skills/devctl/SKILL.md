@@ -74,4 +74,4 @@ the debug agent. The agent model is set with `devctl config set debug.model <nam
 
 ## Adding a service (config)
 
-Services live in the resolved devctl configuration. A service declares `repo`, `basePort`, `command` (supports `${port}`), and optionally `provides`, `remoteProvides`, `wiring`, `dependsOn`, `shared`. See `devctl config show` or the repo README for the schema. Config errors fail at load, so run any devctl command after editing to catch mistakes.
+Services live in the resolved devctl configuration. A service declares `repo`, `basePort`, `command` (supports `${port}`), and optionally `provides`, `remoteProvides`, `wiring`, `dependsOn`, `shared`. See `devctl config show` or `docs/configuration.md` in the devctl repo for the schema. Config errors fail at load, so run any devctl command after editing to catch mistakes.
