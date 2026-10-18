@@ -103,3 +103,28 @@ Usable in `command`, `env`, and `provides`:
   `~/.devctl/env/<stack>/<service>.env`.
 - `devctl env show <service>[/<worktree>]` prints each key with the source it came from.
 - `devctl env set|unset|edit` maintain the stack override file.
+
+## Ports, fixed-port and containerized services
+
+portless is required. A service is portless-owned by default: devctl runs it through
+`portless run`, portless picks the port, and the service answers at
+`https://<worktree>.<service>.localhost`. A service that must publish its own port is
+"fixed-port": use `${port}` anywhere in its templates (`command`, `env`, or `provides`), and
+devctl assigns the port and registers a portless alias for it. Use `${url}` (or `${origin}`) for
+a service's public URL; it is the named URL when the service is portless-owned.
+
+Containerized services need no special config. `command` brings the containers up and the other
+fields cover the rest:
+
+- `command`: `docker compose -f docker-compose.yml up -d my-service`
+- `stopCommand`: `docker compose -f docker-compose.yml stop my-service` (valid on any service;
+  devctl stops a service with a stopCommand by running it, not by killing a process tree)
+- `logsCommand`: `docker compose -f docker-compose.yml logs --tail 100 my-service` (optional;
+  `devctl logs` uses it when set, otherwise it tails the captured process log)
+- `healthCommand`: a readiness check, for example a `pg_isready` or `mongosh` probe
+- `${port}` in `command` or `env` when the container publishes a host port; devctl assigns it and
+  registers the alias, and the compose project can name itself and its volumes from that port or
+  from other env devctl injects
+
+devctl does not generate compose files and has no runtime field: `command` decides where a
+service runs, exactly as the shared `mongo` service does.

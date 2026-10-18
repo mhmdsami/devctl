@@ -7,22 +7,26 @@ devctl runs local services as git worktrees. A few terms come up everywhere.
   worktree is named after the branch it holds.
 - **stack**: the same worktree name used across services, such as `ft-my-feature` in api, web,
   and admin. One name, one feature. `devctl stack up ft-my-feature` starts all of them.
-- **port**: pinned per worktree. `head` keeps the service's `basePort`, and each other worktree
-  gets the next free slot the first time devctl sees it, then keeps it. Adding or removing a
-  worktree never moves another one's port.
+- **port**: portless owns it by default, and devctl reads the chosen port back from
+  `portless list`. A fixed-port service (one whose templates use `${port}`) keeps the service's
+  `basePort`, and each other worktree gets the next free slot the first time devctl sees it.
 - **shared service**: runs once instead of per worktree, and has no branch or target. `mongo` is
   the usual example. Start it with `devctl up mongo`, or let the graph pull it in when a
   dependent starts.
 
 A service is addressed as `<service>/<worktree>`, for example `web/ft-my-feature`. Reach it at
-`http://localhost:<port>`, or at a named URL if portless is on (see [Named URLs](portless.md)).
+`https://<worktree>.<service>.localhost` (see [Named URLs](portless.md)); fixed-port services also
+answer at `http://localhost:<port>`.
 
 ## State
 
-`~/.devctl/state.json` holds running services, the env mode, stack definitions, per-service
-targets, and worktree port slots. It is safe to delete. If a process outlives its state entry,
-for example after the terminal manager restarts, the next `up` adopts it back by worktree path,
-so ownership and stopping keep working.
+`~/.devctl/state.jsonl` is an append-only log that holds stack definitions, the env mode,
+per-service targets, linked agent sessions, and the runtime cache. Each change appends a small
+record, so the CLI and the Raycast poller can write at the same time without clobbering each
+other. A corrupt record is quarantined to `state.jsonl.corrupt-<timestamp>` and the log keeps its
+good prefix. It is safe to delete. If a process outlives its entry, for example after the terminal
+manager restarts, the next `up` adopts it back by worktree path, so ownership and stopping keep
+working.
 
 ## Processes
 

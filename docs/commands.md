@@ -22,14 +22,22 @@ devctl config get <path>                 # read one value, e.g. debug.model
 devctl config set <path> <value>         # write one value; validated before saving
 devctl context [stack]                   # markdown status of a stack, for agents
 devctl diagnose <service>/<worktree>     # hand a service's recent logs to the debug agent
+devctl agents [stack] [--refresh] [--unassigned] [--json]   # claude/codex/opencode/pi sessions per stack
+devctl agent assign <stack> <agent> <id>  # link a session to a stack (a link wins over a suggestion)
+devctl agent unassign <agent> <id>
+devctl agent note <agent> <id> <text>
+devctl agent resume <stack> [--agent X] [--id Y]   # runs the agent's resume command in its directory
 devctl doctor [--json]                   # config, binaries, ports, env files, stale state, branch conflicts
 devctl attach [workspace]
-devctl portless on|off|status            # start/stop the portless proxy (named URLs), show routes
+devctl portless start|stop|status        # manage the portless proxy (named URLs), show routes
 devctl completion bash|zsh
 ```
 
 ## Notes
 
+- portless is required (Node 24+). A service is portless-owned unless a template uses `${port}`;
+  fixed-port services get a devctl-assigned port and a `portless alias`. See
+  [Named URLs](portless.md).
 - Args are strict. Unknown options are rejected with a pointer to `devctl <cmd> --help`.
 - `--no-color` and `--quiet` work on any command.
 - Mutating commands accept `--json` for a machine-readable result.

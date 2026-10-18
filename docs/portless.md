@@ -1,22 +1,37 @@
 # Named URLs (portless)
 
 portless replaces port numbers with stable URLs like `https://web.ft-my-feature.localhost`. It is
-optional and ships as an optional dependency (needs Node 24+).
+required (Node 24+). `portless` ships as a normal dependency and devctl starts the proxy when you
+run `devctl up`.
 
 ```sh
-devctl portless on      # start the proxy and register a route per running service
-devctl portless status  # mode, proxy state, and active routes
-devctl portless off     # stop the proxy and go back to localhost ports
+devctl portless start   # start the proxy (default 1355, so it does not need sudo)
+devctl portless status  # proxy state and active routes
+devctl portless stop    # stop the proxy
 ```
 
-`on` and `off` restart running services so their env matches. The proxy runs as root, so those
-two commands ask for `sudo`. To avoid sudo, run it on another port:
-`devctl portless on --port 1355`, which serves `https://<name>.localhost:1355`.
+## How a service gets its port
 
-If portless is missing or not runnable, devctl uses `http://localhost:<port>` everywhere and
-never advertises a URL that does not resolve. `devctl doctor` reports the mode, the proxy state,
-and any running service that is missing a route.
+A service is **portless-owned** by default. devctl runs it through `portless run`, portless picks
+the port, and the service answers at `https://<worktree>.<service>.localhost` (or
+`https://<service>.localhost` for `head`). devctl reads the chosen port back from `portless list`,
+so nothing else has to know it.
 
-For a service that publishes its own URL, use the `${origin}` template so it stays same-origin
-when browsed through portless, and falls back to the port when portless is off. See
-[Configuration](configuration.md#templates).
+A service is **fixed-port** when its templates use `${port}` anywhere (`command`, `env`, or
+`provides`). devctl then assigns the port, and registers a `portless alias` for it. Use this for a
+service that must publish a fixed port, for example a container that maps a host port, or a tool
+that hardcodes one.
+
+Because portless injects `--port` for known frameworks (Next, Vite, Astro, and others), a native
+service that wants the portless-owned path just drops `-p ${port}` from its command.
+
+## URLs in templates
+
+- `${url}` and `${origin}` are the service's public URL: `https://<name>.localhost` when the
+  service is portless-owned, and the aliased named URL when it is fixed-port. Use one of these for
+  a service's own base URL, not `http://localhost:${port}`.
+- `${dnsName}` is the portless name, `<worktree>.<service>`.
+- `${port}` is the devctl-assigned port, available only to fixed-port services.
+
+`devctl doctor` errors when portless is missing or not runnable, and warns when the proxy is down or
+a running service has no route.

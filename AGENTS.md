@@ -10,6 +10,8 @@ worktrees, wired together by a dependency graph declared in `devctl.config.json`
 - `src/stacks.ts` - the graph: providers, wiring, dependency resolution, env planning
 - `src/registry.ts` - worktree discovery, ports, targets (worktree names are identity)
 - `src/session.ts` - herdr (terminal manager) integration: tabs, panes, focus, stop
+- `src/store.ts` - the append-only JSONL state log (per-key deltas, quarantine on corruption)
+- `src/agents/` - runner-agnostic session adapters (claude, codex, opencode, pi) and the link index
 - `src/debugAgent.ts` - optional on-failure diagnosis via an external agent CLI
 - `raycast/` - the Raycast extension; talks to the CLI through `lib/devctl.ts`
 - `devctl.config.example.jsonc` - the committed example; the real config is gitignored
@@ -28,6 +30,8 @@ worktrees, wired together by a dependency graph declared in `devctl.config.json`
   checked-out branch may change; its name may not.
 - Only kill processes devctl started (ownership via pid + start token). Unowned port
   occupants require explicit `--force`.
+- portless is required and owns the port for services that do not use `${port}`; those that do are
+  fixed-port and get a `portless alias`. Agent sessions are listed, not guessed: links are explicit.
 - Shared services (`shared: true`) have no worktrees, no branch targets, and never appear
   as stack members. They run detached, not in herdr tabs.
 - Errors that matter go to stderr; progress goes through `out()` so `--quiet` works.

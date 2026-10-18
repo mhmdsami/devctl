@@ -12,6 +12,8 @@ cd raycast && npm install && npm run dev
 - **Create / Edit Stack**: choose a source per service (head, a worktree, test, prod), create
   missing worktrees, and confirm removed members.
 - **Switch Env**: test or prod.
+- **Agent Sessions**: claude, codex, opencode, and pi sessions grouped by stack, with Copy Resume
+  Command and Copy Session ID.
 - Keyboard: `enter` services, `cmd+return` start and stop, `cmd+r` restart, `cmd+e` edit,
   `cmd+d` delete, `cmd+f` focus, `cmd+c` agent context.
 

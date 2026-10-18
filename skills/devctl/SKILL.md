@@ -6,7 +6,7 @@ tags: development, tooling
 
 # devctl
 
-`devctl` runs local development services. The service graph comes from `DEVCTL_CONFIG`, or `devctl.config.jsonc` / `devctl.config.json` in the devctl installation. Each git worktree gets its own port. A worktree name shared across services is a **stack**. Services run inside herdr tabs. Never kill tabs or ports yourself; devctl refuses to kill processes it doesn't own.
+`devctl` runs local development services. The service graph comes from `DEVCTL_CONFIG`, or `devctl.config.jsonc` / `devctl.config.json` in the devctl installation. Each git worktree gets its own named URL (portless-owned) or port (fixed-port). A worktree name shared across services is a **stack**. Services run inside herdr tabs. Never kill tabs or ports yourself; devctl refuses to kill processes it doesn't own. portless is required.
 
 ## Read state first, act second
 
@@ -47,7 +47,18 @@ devctl logs web/ft-my-feature --lines 100    # last 100 lines, default 50
 devctl logs web/ft-my-feature --follow       # tails, blocking; agents should use --lines
 ```
 
-URLs come from `status --json`. `portlessUrl` looks like `https://<branch>.<service>.localhost:1355`; the fallback is `http://localhost:<port>`. Don't construct them by hand. Don't curl services to check health. `devctl status --check` does that.
+URLs come from `status --json` (`url`, and `portlessUrl`). They look like `https://<branch>.<service>.localhost` (portless-owned, `port` is null); fixed-port services also carry a numeric `port`. Don't construct them by hand. Don't curl services to check health. `devctl status --check` does that.
+
+## Agent sessions
+
+```sh
+devctl agents [stack] --refresh   # claude/codex/opencode/pi sessions, with the stack each is linked to
+devctl agent assign <stack> <agent> <id>
+devctl agent note <agent> <id> "text"
+devctl agent resume <stack> [--agent X] [--id Y]
+```
+
+Sessions are listed, not guessed (you often run agents from the repo root). Link the ones that belong to a stack; then `devctl context <stack>` includes them. This works without herdr.
 
 ## Env and targeting
 

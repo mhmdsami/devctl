@@ -14,8 +14,11 @@ devctl down ft-my-feature  # stop them
 - **Stacks**: one worktree name across services is one feature. Start it with one command.
 - **Graph**: services declare what they provide and what they depend on. devctl starts them in
   order and injects the URLs.
-- **Named URLs**: optional portless integration gives every service a
-  `https://<name>.localhost` URL instead of a port.
+- **Named URLs**: portless is required and owns the port, so every service answers at
+  `https://<worktree>.<service>.localhost`. A service that must publish a fixed port uses
+  `${port}` and gets a portless alias.
+- **Agent sessions**: devctl finds the claude, codex, opencode, and pi sessions for a stack and
+  links them, so you can pick work back up later.
 - **Raycast**: a menu bar and panels to start, stop, and inspect stacks.
 
 ## Install
