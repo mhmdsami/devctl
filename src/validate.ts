@@ -13,6 +13,9 @@ export function validateConfig(cfg: unknown): TDevctlConfig {
     throw new ConfigError('$', 'expected an object')
   }
   const c = cfg as Record<string, unknown>
+  if (c.version !== undefined && (typeof c.version !== 'number' || !Number.isInteger(c.version) || c.version < 1)) {
+    throw new ConfigError('version', 'expected a positive integer when set')
+  }
   requireString(c, 'reposRoot')
   requireObject(c, 'herdr')
   const herdr = c.herdr as Record<string, unknown>
@@ -84,6 +87,9 @@ function validateService(services: Record<string, unknown>, name: string, raw: u
   }
   if (s.stopCommand !== undefined && (typeof s.stopCommand !== 'string' || !s.stopCommand)) {
     throw new ConfigError(`services.${name}.stopCommand`, 'expected non-empty string when set')
+  }
+  if (s.logsCommand !== undefined && (typeof s.logsCommand !== 'string' || !s.logsCommand.trim())) {
+    throw new ConfigError(`services.${name}.logsCommand`, 'expected non-empty string when set')
   }
   if (s.requires !== undefined) {
     throw new ConfigError(`services.${name}.requires`, 'removed - express infra deps via dependsOn/wiring to a shared service')

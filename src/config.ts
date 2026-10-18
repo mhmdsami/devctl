@@ -21,6 +21,7 @@ export interface TServiceConfig {
   healthCommand?: string
   shared?: boolean
   stopCommand?: string
+  logsCommand?: string
   install?: string
   provides?: Record<string, string>
   remoteProvides?: Record<string, TRemoteSource>
@@ -37,6 +38,7 @@ export interface TDebugConfig {
 }
 
 export interface TDevctlConfig {
+  version?: number
   reposRoot: string
   herdr: { enabled: boolean; workspace: string }
   envBaseFiles: Record<'local' | 'test' | 'prod', string>
@@ -63,14 +65,26 @@ export function loadConfig(): TDevctlConfig {
   const raw = fs.readFileSync(file, 'utf8')
   const parsed = parseJsonc<unknown>(raw, file)
   expandHome(parsed)
-  return validateConfig(parsed)
+  const cfg = validateConfig(parsed)
+  cfg.version ??= CONFIG_VERSION
+  return cfg
 }
+
+export const CONFIG_VERSION = 2
 
 export function interpolate(template: string, vars: Record<string, string | number | null>): string {
   return template.replace(/\$\{(\w+)\}/g, (whole, key) => {
     const v = vars[key]
     return v === undefined || v === null ? whole : String(v)
   })
+}
+
+export function usesFixedPort(svc: TServiceConfig): boolean {
+  const token = /\$\{port\}/
+  if (token.test(svc.command)) return true
+  for (const value of Object.values(svc.env ?? {})) if (token.test(value)) return true
+  for (const value of Object.values(svc.provides ?? {})) if (token.test(value)) return true
+  return false
 }
 
 export function repoPath(cfg: TDevctlConfig, service: string): string {

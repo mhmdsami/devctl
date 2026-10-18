@@ -1,5 +1,9 @@
 {
   // Copy to devctl.config.json and adapt. `$schema` support depends on your editor.
+  // version 2: portless is required. A service is portless-owned (portless picks the port)
+  // unless a template uses ${port}, in which case devctl assigns the port and registers a
+  // portless alias for it. Use ${url} (or ${origin}) for a service's public URL.
+  "version": 2,
   "reposRoot": "~/dev",
   "herdr": {
     "enabled": true,
@@ -21,6 +25,7 @@
       "shared": true,
       "command": "docker compose -f docker-compose.yml up -d mongo1 mongo2 mongo3 mongo-setup",
       "stopCommand": "docker compose -f docker-compose.yml stop mongo-setup mongo3 mongo2 mongo1",
+      "logsCommand": "docker compose -f docker-compose.yml logs --tail 100 mongo1 mongo2 mongo3",
       "healthTimeoutMs": 90000
     },
     "api": {
@@ -30,12 +35,12 @@
       "command": "./node_modules/.bin/nodemon --exec 'node --inspect=${inspectPort} src/server.ts'",
       "env": {
         "NODE_ENV": "development",
-        "PUBLIC_SERVER_URL": "http://localhost:${port}"
+        "PUBLIC_SERVER_URL": "${origin}"
       },
       "install": "pnpm install",
       "dependsOn": ["mongo"],
       "provides": {
-        "url": "http://localhost:${port}/api"
+        "url": "${url}/api"
       },
       "remoteProvides": {
         "url": { "from": "web", "envKey": "API_URL" }
