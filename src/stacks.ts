@@ -3,27 +3,29 @@ import path from 'path'
 import { parseEnvFile, seedEnvFiles, writeEnvOverlay } from './envfile'
 import { interpolate, loadConfig, repoDir, type TDevctlConfig, type TServiceConfig } from './config'
 import { isShared, listWorktrees, type TRepoKey, type TWorktree } from './registry'
-import { dnsName as portlessDnsName, namedUrl, namedUrlsEnabled } from './portless'
+import { dnsName as portlessDnsName, namedUrl } from './portless'
 import { readOverrides } from './envOverrides'
 import type { TDevctlState, TStackDef } from './state'
 
-type TModeState = Pick<TDevctlState, 'env' | 'targets'> & { portless?: boolean }
+type TModeState = Pick<TDevctlState, 'env' | 'targets'>
 
-function templateVars(repo: TRepoKey, wt: TWorktree, named: boolean): Record<string, string | number> {
+function templateVars(repo: TRepoKey, wt: TWorktree): Record<string, string | number> {
   const name = portlessDnsName(repo, wt)
-  const origin = named ? namedUrl(name) : `http://localhost:${wt.port}`
+  const url = namedUrl(name)
   return {
-    port: wt.port,
+    port: wt.port ?? '',
     inspectPort: wt.inspectPort ?? '',
     dnsName: name,
-    portlessUrl: origin,
-    origin,
+    url,
+    portlessUrl: url,
+    origin: url,
   }
 }
 
 export interface TStackPlan {
   path: string
-  port: number
+  name: string
+  port: number | null
   cmd: string
   env: Record<string, string>
   healthTimeoutMs: number
@@ -125,7 +127,7 @@ export function resolveWiring(
     const wt = listWorktrees(provider).find((w) => w.name === target.name)
     if (!wt) throw new Error(`No ${provider} worktree for "${target.name}"`)
     const template = serviceOf(provider).provides?.[value]
-    values[envKey] = template ? interpolate(template, templateVars(provider, wt, namedUrlsEnabled(state))) : null
+    values[envKey] = template ? interpolate(template, templateVars(provider, wt)) : null
   }
   return values
 }
@@ -156,10 +158,11 @@ export function planStack(
 ): TStackPlan {
   const svc = serviceOf(repo)
   if (!svc.shared) seedEnvFiles(wt.path, repoDir(repo))
-  const vars = templateVars(repo, wt, namedUrlsEnabled(state))
+  const vars = templateVars(repo, wt)
   const { env } = resolveEnv(repo, wt, state, stackDef, { write: true })
   return {
     path: wt.path,
+    name: portlessDnsName(repo, wt),
     port: wt.port,
     cmd: interpolate(svc.command, vars),
     env,
@@ -187,7 +190,7 @@ export function resolveEnv(
 ): TEnvResolution {
   const cfg = loadConfig()
   const svc = serviceOf(repo)
-  const vars = templateVars(repo, wt, namedUrlsEnabled(state))
+  const vars = templateVars(repo, wt)
   const baseFile = cfg.envBaseFiles[state.env]
   const basePath = path.join(wt.path, baseFile)
   const base: Record<string, string> = !svc.shared && fs.existsSync(basePath) ? parseEnvFile(fs.readFileSync(basePath, 'utf8')) : {}

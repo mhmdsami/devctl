@@ -3,5 +3,6 @@ dist/
 raycast/node_modules/
 raycast/dist/
 devctl.config.json
+devctl.config.json.bak
 .DS_Store
 *.log

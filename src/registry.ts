@@ -1,7 +1,7 @@
 import { execFileSync } from 'child_process'
 import fs from 'fs'
 import path from 'path'
-import { LEGACY_WORKTREES_REL, loadConfig, repoPath, worktreePath } from './config'
+import { LEGACY_WORKTREES_REL, loadConfig, repoPath, usesFixedPort, worktreePath } from './config'
 import { loadState, saveState } from './state'
 
 export type TRepoKey = string
@@ -20,7 +20,7 @@ export interface TWorktree {
   branch: string | null
   path: string
   slot: number
-  port: number
+  port: number | null
   inspectPort: number | null
 }
 
@@ -149,7 +149,7 @@ export function listWorktrees(repo: TRepoKey): TWorktree[] {
   const runningPorts: Record<string, number> = {}
   for (const key of keys) {
     const tracked = state.stacks[key]
-    if (tracked) runningPorts[key] = tracked.port
+    if (tracked && tracked.port !== null) runningPorts[key] = tracked.port
   }
   const assigned = assignSlots(keys, runningPorts, state.slots ?? {}, svc.basePort)
   const merged = { ...(state.slots ?? {}), ...assigned }
@@ -166,7 +166,7 @@ export function listWorktrees(repo: TRepoKey): TWorktree[] {
       branch: entry.tree.branch,
       path: entry.tree.path,
       slot,
-      port: slotPort(svc.basePort, slot),
+      port: usesFixedPort(svc) ? slotPort(svc.basePort, slot) : null,
       inspectPort: svc.inspectBasePort != null ? svc.inspectBasePort + slot : null,
     }
   })

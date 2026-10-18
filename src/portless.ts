@@ -3,13 +3,13 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 import { fileURLToPath } from 'url'
-import { tcpAlive } from './process'
+import { shQuote, tcpAlive } from './process'
 
 const PROXY_PORT_FILE = path.join(os.homedir(), '.portless', 'proxy.port')
+export const DEVCTL_PROXY_PORT = 1355
 
 let cachedBin: string | null | undefined
 let cachedRunnable: boolean | undefined
-let cachedRoutes: Set<string> | undefined
 
 function packageRoot(): string {
   return path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -23,7 +23,7 @@ export function portlessBin(): string | null {
     return cachedBin
   }
   try {
-    cachedBin = execFileSync('bash', ['-lc', 'command -v portless'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() || null
+    cachedBin = execFileSync('bash', ['-lc', 'command -v portless'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5_000 }).trim() || null
   } catch {
     cachedBin = null
   }
@@ -34,7 +34,7 @@ export function portlessAvailable(): boolean {
   if (portlessBin() === null) return false
   if (cachedRunnable !== undefined) return cachedRunnable
   try {
-    execFileSync(portlessBin()!, ['--version'], { stdio: 'ignore' })
+    execFileSync(portlessBin()!, ['--version'], { stdio: 'ignore', timeout: 5_000 })
     cachedRunnable = true
   } catch {
     cachedRunnable = false
@@ -42,9 +42,12 @@ export function portlessAvailable(): boolean {
   return cachedRunnable
 }
 
-export function namedUrlsEnabled(state: { portless?: boolean }): boolean {
-  if (state.portless === false) return false
-  return portlessAvailable()
+export function requirePortless(): string {
+  const bin = portlessBin()
+  if (!bin || !portlessAvailable()) {
+    throw new Error('portless is required but not usable - run `pnpm install` in the devctl checkout (needs Node 24+)')
+  }
+  return bin
 }
 
 export function proxyPort(): number {
@@ -61,43 +64,55 @@ export function namedUrl(name: string): string {
   return port === 443 ? `https://${name}.localhost` : `https://${name}.localhost:${port}`
 }
 
-export async function portlessProxyUp(): Promise<boolean> {
-  const port = proxyPort()
-  return (await tcpAlive(port, 250)) || (await tcpAlive(1355, 250))
+export function portlessRunCommand(name: string, command: string): string {
+  const bin = requirePortless()
+  return `${shQuote(bin)} run --name ${shQuote(name)} bash -lc ${shQuote(command)}`
 }
 
-export function activeRoutes(): Set<string> {
-  if (cachedRoutes) return cachedRoutes
-  const routes = new Set<string>()
+export async function portlessProxyUp(): Promise<boolean> {
+  const port = proxyPort()
+  return (await tcpAlive(port, 250)) || (await tcpAlive(DEVCTL_PROXY_PORT, 250))
+}
+
+export interface TRoute {
+  host: string
+  port: number
+  kind: string
+}
+
+export function listRoutes(): TRoute[] {
+  const routes: TRoute[] = []
   const bin = portlessBin()
   if (bin) {
     try {
-      const out = execFileSync(bin, ['list'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
-      for (const match of out.matchAll(/https?:\/\/([^\s/]+)/g)) routes.add(match[1])
+      const out = execFileSync(bin, ['list'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5_000 })
+      for (const match of out.matchAll(/https?:\/\/(\S+)\s+->\s+localhost:(\d+)(?:\s+\(([^)]+)\))?/g)) {
+        routes.push({ host: match[1], port: Number(match[2]), kind: match[3] ?? 'app' })
+      }
     } catch {
     }
   }
-  cachedRoutes = routes
   return routes
+}
+
+export function routePort(name: string): number | null {
+  const route = listRoutes().find((r) => r.host === `${name}.localhost`)
+  return route?.port ?? null
+}
+
+export function activeRoutes(): Set<string> {
+  return new Set(listRoutes().map((r) => r.host))
 }
 
 export function hasRoute(hostname: string): boolean {
   return activeRoutes().has(hostname)
 }
 
-export async function portlessUrl(name: string): Promise<string | null> {
-  if (!portlessAvailable()) return null
-  if (!(await portlessProxyUp())) return null
-  if (!hasRoute(`${name}.localhost`)) return null
-  return namedUrl(name)
-}
-
 export function alias(name: string, port: number): boolean {
   const bin = portlessBin()
   if (!bin) return false
   try {
-    execFileSync(bin, ['alias', name, String(port)], { stdio: 'ignore' })
-    cachedRoutes = undefined
+    execFileSync(bin, ['alias', name, String(port)], { stdio: 'ignore', timeout: 10_000 })
     return true
   } catch {
     return false
@@ -108,26 +123,30 @@ export function removeAlias(name: string): boolean {
   const bin = portlessBin()
   if (!bin) return false
   try {
-    execFileSync(bin, ['alias', '--remove', name], { stdio: 'ignore' })
-    cachedRoutes = undefined
+    execFileSync(bin, ['alias', '--remove', name], { stdio: 'ignore', timeout: 10_000 })
     return true
   } catch {
     return false
   }
 }
 
-export function startProxy(port?: number): void {
-  const bin = portlessBin()
-  if (!bin) throw new Error('portless is not installed')
+export function startProxy(port = proxyPort()): void {
+  const bin = requirePortless()
   const args = ['proxy', 'start']
   if (port && port !== 443) args.push('-p', String(port))
-  execFileSync(bin, args, { stdio: ['inherit', process.stderr, process.stderr] })
+  execFileSync(bin, args, { stdio: ['inherit', process.stderr, process.stderr], timeout: 30_000 })
+}
+
+export async function ensureProxy(): Promise<void> {
+  const port = proxyPort()
+  if (await tcpAlive(port, 250)) return
+  startProxy(port === 443 ? DEVCTL_PROXY_PORT : port)
 }
 
 export function stopProxy(): void {
   const bin = portlessBin()
   if (!bin) return
-  execFileSync(bin, ['proxy', 'stop'], { stdio: ['inherit', process.stderr, process.stderr] })
+  execFileSync(bin, ['proxy', 'stop'], { stdio: ['inherit', process.stderr, process.stderr], timeout: 30_000 })
 }
 
 function sanitizeLabel(input: string): string {

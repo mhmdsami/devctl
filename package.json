@@ -7,7 +7,7 @@
   "license": "MIT",
   "author": "Sami",
   "engines": {
-    "node": ">=20"
+    "node": ">=24"
   },
   "bin": {
     "devctl": "./bin/devctl"
@@ -23,7 +23,7 @@
     "tsx": "^4.19.0",
     "typescript": "^5.6.0"
   },
-  "optionalDependencies": {
+  "dependencies": {
     "portless": "^0.15.8"
   }
 }
