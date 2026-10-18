@@ -11,6 +11,7 @@ worktrees, wired together by a dependency graph declared in `devctl.config.json`
 - `src/registry.ts` - worktree discovery, ports, targets (worktree names are identity)
 - `src/session.ts` - herdr (terminal manager) integration: tabs, panes, focus, stop
 - `src/store.ts` - the append-only JSONL state log (per-key deltas, quarantine on corruption)
+- `src/usage.ts` - local command telemetry (`~/.devctl/usage.jsonl`) and `devctl usage`
 - `src/agents/` - runner-agnostic session adapters (claude, codex, opencode, pi) and the link index
 - `src/debugAgent.ts` - optional on-failure diagnosis via an external agent CLI
 - `raycast/` - the Raycast extension; talks to the CLI through `lib/devctl.ts`

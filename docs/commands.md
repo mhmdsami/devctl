@@ -31,6 +31,7 @@ devctl agent resume <stack> [--agent X] [--id Y]   # runs the agent's resume com
 devctl doctor [--json]                   # config, binaries, ports, env files, stale state, branch conflicts
 devctl attach [workspace]
 devctl portless start|stop|status        # manage the portless proxy (named URLs), show routes
+devctl usage [--json]                     # command usage counts from local telemetry
 devctl completion bash|zsh
 ```
 
@@ -48,3 +49,6 @@ devctl completion bash|zsh
   Raycast form, since they have no branch or target. Start and stop them with
   `devctl up mongo` / `devctl down mongo`, or let the graph pull them in.
 - Completions: `eval "$(devctl completion zsh)"` (or `completion bash`).
+- Every run appends one line to `~/.devctl/usage.jsonl` (command, subcommand, ok, ms). It is local
+  and never sent anywhere, capped at 1 MB, and `DEVCTL_TELEMETRY=0` disables it. `devctl usage`
+  summarizes it.

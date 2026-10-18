@@ -28,6 +28,9 @@ good prefix. It is safe to delete. If a process outlives its entry, for example 
 manager restarts, the next `up` adopts it back by worktree path, so ownership and stopping keep
 working.
 
+`~/.devctl/usage.jsonl` is a separate local log of command runs (see `devctl usage`). It holds no
+service state and can be deleted.
+
 ## Processes
 
 Services run in the terminal manager (herdr) by default, each in its own tab. Set
