@@ -20,6 +20,7 @@ import { execFile } from 'child_process'
 import { debugFailure, runDiagnosis } from './debugAgent'
 import { adapterFor, refreshSessions, repoForCwd, sessionKey, suggestStack, type TAgentSession } from './agents'
 import { inferSession, resolveCurrentSession } from './agents/current'
+import { recordUsage, summarizeUsage, USAGE_FILE } from './usage'
 import fs from 'fs'
 import path from 'path'
 import readline from 'node:readline/promises'
@@ -1086,6 +1087,25 @@ async function cmdDiagnose(a: TArgs): Promise<void> {
   console.log(diagnosis)
 }
 
+function cmdUsage(a: TArgs): void {
+  const summary = summarizeUsage()
+  if (flag(a, 'json')) {
+    console.log(JSON.stringify({ total: summary.reduce((sum, entry) => sum + entry.count, 0), commands: summary }, null, 2))
+    return
+  }
+  if (summary.length === 0) {
+    out(colors.dim(`no usage recorded yet - ${USAGE_FILE} is written on each run (DEVCTL_TELEMETRY=0 disables it)`))
+    return
+  }
+  const total = summary.reduce((sum, entry) => sum + entry.count, 0)
+  out(`${total} run(s) recorded in ${USAGE_FILE}`)
+  for (const entry of summary) {
+    const label = `${entry.cmd}${entry.sub ? ` ${entry.sub}` : ''}`
+    const failed = entry.count - entry.ok
+    out(`  ${label.padEnd(22)} ${String(entry.count).padStart(6)}${failed > 0 ? colors.dim(`  (${failed} failed)`) : ''}`)
+  }
+}
+
 async function cmdDoctor(a: TArgs): Promise<void> {
   const cfg = loadConfig()
   const state = loadState()
@@ -1395,7 +1415,7 @@ function cmdContext(a: TArgs): void {
   console.log(lines.join('\n'))
 }
 
-const COMPLETION_COMMANDS = 'up down kill restart status which env use attach portless logs doctor config stack agents agent completion --version --help'
+const COMPLETION_COMMANDS = 'up down kill restart status which env use attach portless logs doctor config stack agents agent completion usage --version --help'
 
 function cmdCompletion(a: TArgs): void {
   const shell = a.positionals[0]
@@ -1640,6 +1660,7 @@ const GLOBAL_USAGE = `usage: devctl <command>
   attach [workspace]             focus a herdr workspace
   portless start|stop|status       manage the portless proxy (named URLs)
   completion bash|zsh            print shell completion script
+  usage [--json]                 command usage counts from local telemetry (never sent anywhere)
   --version                      print devctl version
 
   Global flags: --no-color, --quiet. Every command accepts --help.
@@ -1727,6 +1748,11 @@ const HELP: Record<string, string> = {
   completion: `usage: devctl completion bash|zsh
 
   Print a completion script. zsh: eval "$(devctl completion zsh)". bash: eval "$(devctl completion bash)".`,
+  usage: `usage: devctl usage [--json]
+
+  Prints how often each command has run, from the local telemetry log. Every run appends one line
+  to ~/.devctl/usage.jsonl (set DEVCTL_TELEMETRY=0 to disable). The log is local and never sent
+  anywhere, and it is capped at 1 MB.`,
   stack: `usage: devctl stack <subcommand>
 
   ls [--json]        pinned stacks, services, running state
@@ -1740,6 +1766,19 @@ const HELP: Record<string, string> = {
 }
 
 async function runCommand(rawArgv: string[]): Promise<void> {
+  const started = Date.now()
+  let ok = true
+  try {
+    await dispatchCommand(rawArgv)
+  } catch (error) {
+    ok = false
+    throw error
+  } finally {
+    recordUsage(rawArgv, ok && process.exitCode !== 1, Date.now() - started)
+  }
+}
+
+async function dispatchCommand(rawArgv: string[]): Promise<void> {
   if (rawArgv.includes('--no-color')) setColorEnabled(false)
   if (rawArgv.includes('--quiet')) setQuiet(true)
   const argv = rawArgv.filter((a) => a !== '--no-color' && a !== '--quiet')
@@ -1798,6 +1837,8 @@ async function runCommand(rawArgv: string[]): Promise<void> {
       return cmdAgents(parseArgs(args, { boolean: ['json', 'refresh', 'unassigned'] }, 'agents'))
     case 'agent':
       return cmdAgent(args)
+    case 'usage':
+      return cmdUsage(parseArgs(args, { boolean: ['json'] }, 'usage'))
     case 'doctor':
       return cmdDoctor(parseArgs(args, { boolean: ['json'] }, 'doctor'))
     case 'config':
