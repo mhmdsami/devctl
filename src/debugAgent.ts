@@ -70,13 +70,22 @@ function spawnAgent(info: TDebugInfo, command: string, stream: boolean): Promise
       console.error(colors.dim('debug agent: timed out after 180s'))
       child.kill('SIGTERM')
     }, 180_000)
+    const onSignal = (): void => {
+      child.kill('SIGTERM')
+    }
+    process.once('SIGINT', onSignal)
+    process.once('SIGTERM', onSignal)
     child.on('exit', () => {
       clearTimeout(timer)
+      process.removeListener('SIGINT', onSignal)
+      process.removeListener('SIGTERM', onSignal)
       resolve(text.trim())
     })
     child.on('error', (err) => {
       console.error(colors.dim(`debug agent: ${err.message}`))
       clearTimeout(timer)
+      process.removeListener('SIGINT', onSignal)
+      process.removeListener('SIGTERM', onSignal)
       resolve(text.trim())
     })
   })

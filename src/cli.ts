@@ -4,20 +4,21 @@ process.env.PATH = [...PATH_DIRS, ...pathEntries.filter((d) => !PATH_DIRS.includ
 
 import { closeWorkspaceByLabel, findRefByLabel, focusTab, focusWorkspace, refAlive, refExited, refOutput, requireRunner, rerunIn, start, stopRef, sweepDevctlTabs } from './session'
 import { commandEnv, killTree, pidCwd, pidsListeningOnPort, processStartToken, shQuote, tcpAlive } from './process'
-import { loadConfig, repoDir, resolveConfigPath } from './config'
+import { loadConfig, repoDir, resolveConfigPath, usesFixedPort } from './config'
 import { validateConfig } from './validate'
 import { createWorktree, isShared, removeWorktree, repoKeys as repoKeysFromRegistry, entryKey, findWorktree, listAllWorktrees, listWorktrees, parseTarget, resolveCwdTarget, type TRepoKey } from './registry'
 import { seedEnvFiles } from './envfile'
-import { loadState, saveState, STATE_FILE, type TStackState, type TDevctlState } from './state'
+import { loadState, saveState, STATE_FILE, STATE_VERSION, DEVCTL_DIR, reportStoreWarnings, type TStackState, type TDevctlState } from './state'
 import { depsOf, dependentsOf, hasWiring, planStack, providersOf, resolveEnv, type TStackPlan } from './stacks'
 import { overrideFile, setOverride, unsetOverride } from './envOverrides'
 import { discoverStacks, resolveStack } from './stackRegistry'
-import { activeRoutes, alias as portlessAlias, dnsName as portlessDnsName, hasRoute, namedUrlsEnabled, portlessAvailable, portlessBin, portlessProxyUp, portlessUrl, proxyPort, removeAlias as portlessRemoveAlias, startProxy, stopProxy } from './portless'
-import { sleep, colors, setQuiet, out, quiet, setColorEnabled } from './util'
+import { alias as portlessAlias, dnsName as portlessDnsName, ensureProxy, listRoutes, namedUrl, portlessAvailable, portlessBin, portlessProxyUp, portlessRunCommand, proxyPort, removeAlias as portlessRemoveAlias, requirePortless, routePort, startProxy, stopProxy } from './portless'
+import { sleep, sleepSync, colors, setQuiet, out, quiet, setColorEnabled } from './util'
 import { parseArgs, flag, opt, positional, type TArgs, UsageError } from './args'
 import { tailFile } from './logtail'
 import { execFile } from 'child_process'
 import { debugFailure, runDiagnosis } from './debugAgent'
+import { adapterFor, refreshSessions, repoForCwd, sessionKey, suggestStack, type TAgentSession } from './agents'
 import fs from 'fs'
 import path from 'path'
 import readline from 'node:readline/promises'
@@ -38,21 +39,36 @@ function targetArg(args: string[]): string | undefined {
   return args.find((a) => !a.startsWith('-'))
 }
 
-const REPOS_SET = new Set(repoKeysFromRegistry())
+let reposSet: Set<string> | null = null
 
 function isRepoName(arg: string): boolean {
-  return REPOS_SET.has(arg.split('/')[0])
+  if (!reposSet) reposSet = new Set(repoKeysFromRegistry())
+  return reposSet.has(arg.split('/')[0])
 }
 
 async function tabAlive(stack: TStackState): Promise<boolean> {
-  return refAlive({ ...stack.ref, port: stack.port })
+  return refAlive({ ...stack.ref, port: stack.port ?? 0 })
 }
 
-async function stackStatus(stack: TStackState, named: boolean): Promise<{ alive: boolean; listening: boolean; portlessUrl: string | null }> {
-  const listening = await tcpAlive(stack.port)
+function servicePort(value: number | null): number {
+  return value ?? 0
+}
+
+async function stackStatus(stack: TStackState): Promise<{ alive: boolean; listening: boolean; portlessUrl: string | null }> {
+  const listening = stack.port != null ? await tcpAlive(stack.port) : false
   const alive = isShared(stack.repo) ? listening : await tabAlive(stack)
-  const portlessLink = named && stack.portlessName && !isShared(stack.repo) ? await portlessUrl(stack.portlessName) : null
+  const portlessLink = stack.portlessName && !isShared(stack.repo) && portlessAvailable() ? namedUrl(stack.portlessName) : null
   return { alive, listening, portlessUrl: portlessLink }
+}
+
+async function discoverPort(name: string, timeoutMs = 15_000): Promise<number | null> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const port = routePort(name)
+    if (port !== null) return port
+    await sleep(250)
+  }
+  return routePort(name)
 }
 
 interface TStartSummary {
@@ -110,22 +126,28 @@ async function ensureStack(
 
   const wt = findWorktree(repo, branchOrName)
   const key = entryKey(wt)
+  const shared = isShared(repo)
+  const svc = loadConfig().services[repo]
+  const fixed = shared || (svc !== undefined && usesFixedPort(svc))
   const portlessName = portlessDnsName(repo, wt)
   const plan = planStack(repo, wt, state, stackDef)
+  const named = namedUrl(portlessName)
+  const startCmd = fixed ? plan.cmd : portlessRunCommand(plan.name, plan.cmd)
+  const startEnv = fixed ? plan.env : { ...plan.env, PORTLESS_PORT: String(proxyPort()) }
   const wiringFingerprint = hasWiring(repo) ? JSON.stringify({ port: plan.port, env: plan.env }) : undefined
 
   const existingRef = findRefByLabel(trackedTabWorkspace(state, key), key)
   const tracked = state.stacks[key]
 
-  const recordStack = (ref: TStackState['ref'], startedAt?: string) => {
+  const recordStack = (ref: TStackState['ref'], port: number | null, startedAt?: string) => {
     const entry: TStackState = {
       key,
       repo,
       worktree: wt.name,
       branch: wt.branch,
       ref,
-      port: wt.port,
-      url: `http://localhost:${wt.port}`,
+      port,
+      url: named,
       portlessName,
       stack: stackDef?.name,
       wiring: wiringFingerprint,
@@ -133,64 +155,71 @@ async function ensureStack(
     }
     state.stacks[entry.key] = entry
     saveState(state)
-    if (!isShared(repo) && namedUrlsEnabled(state)) {
-      portlessAlias(portlessName, wt.port)
+    if (fixed && !shared && port !== null && !portlessAlias(portlessName, port)) {
+      out(colors.yellow(`~ ${key}: could not register the portless route ${portlessName}`))
     }
   }
 
-  const existingTrackedRef = tracked?.ref ? { ...tracked.ref, port: wt.port } : null
+  const livePort = async (): Promise<number | null> => (fixed ? plan.port : routePort(plan.name))
+
+  const startFresh = async (detached: boolean): Promise<{ ref: TStackState['ref']; port: number | null }> => {
+    ensureDeps(key, repo, wt)
+    const ref = start(key, plan.path, startEnv, startCmd, fixed ? servicePort(plan.port) : 0, undefined, { detached })
+    const port = fixed ? plan.port : await discoverPort(plan.name)
+    if (port !== null) ref.port = port
+    return { ref, port }
+  }
+
+  const existingTrackedRef = tracked?.ref ? { ...tracked.ref, port: servicePort(tracked.port) } : null
   const refFromTab = existingRef ?? (existingTrackedRef && (await refAlive(existingTrackedRef)) ? existingTrackedRef : null)
 
   if (refFromTab) {
-    if (await tcpAlive(wt.port)) {
+    const currentPort = await livePort()
+    if (currentPort !== null && (await tcpAlive(currentPort))) {
       const claim = tracked?.stack
       const needsRewire = hasWiring(repo) && (claim !== stackDef?.name || tracked?.wiring !== wiringFingerprint)
       if (needsRewire) {
         out(colors.yellow(`~ ${key}: rewiring for stack ${stackDef?.name ?? '(global)'} - restarting`))
         stopRef(refFromTab, key, { force })
-        for (let i = 0; i < 20 && (await tcpAlive(wt.port)); i++) await sleep(500)
-        if (await tcpAlive(wt.port)) throw new Error(`port ${wt.port} still occupied after stopping ${key} - re-run with --force`)
-        ensureDeps(key, repo, wt)
-        const ref = start(key, plan.path, plan.env, plan.cmd, plan.port)
-        recordStack(ref)
-        if (await waitFor(key, plan, ref, false)) {
-          if (isShared(repo)) summary.shared.push(key)
+        for (let i = 0; i < 20 && (await tcpAlive(currentPort)); i++) await sleep(500)
+        const { ref, port } = await startFresh(false)
+        recordStack(ref, port)
+        if (await waitFor(key, plan, ref, false, port)) {
+          if (shared) summary.shared.push(key)
           else summary.restarted.push(key)
-        }
-        else {
+        } else {
           summary.failed.push(key)
           cleanupFailedEntry(state, key, ref)
         }
         return
       }
-      recordStack(refFromTab, tracked?.startedAt)
-      if (isShared(repo)) summary.shared.push(key)
+      recordStack(refFromTab, currentPort, tracked?.startedAt)
+      if (shared) summary.shared.push(key)
       else summary.reused.push(key)
-      out(colors.green(`● ${key} already running http://localhost:${wt.port}`))
+      out(colors.green(`● ${key} already running ${named}`))
       return
     }
-    out(colors.yellow(`~ ${key}: tab exists but port ${wt.port} is down - restarting`))
+    out(colors.yellow(`~ ${key}: runner exists but the service is down - restarting`))
     if (refFromTab.paneId) {
-      rerunIn(refFromTab, plan.env, plan.cmd)
-      recordStack(refFromTab)
-      if (await waitFor(key, plan, refFromTab, false)) {
-        if (isShared(repo)) summary.shared.push(key)
+      rerunIn(refFromTab, startEnv, startCmd)
+      const port = fixed ? plan.port : await discoverPort(plan.name)
+      if (port !== null) refFromTab.port = port
+      recordStack(refFromTab, port)
+      if (await waitFor(key, plan, refFromTab, false, port)) {
+        if (shared) summary.shared.push(key)
         else summary.restarted.push(key)
-      }
-      else {
+      } else {
         summary.failed.push(key)
         cleanupFailedEntry(state, key, refFromTab)
       }
     } else {
       stopRef(refFromTab, key, { force })
-      ensureDeps(key, repo, wt)
-      const ref = start(key, plan.path, plan.env, plan.cmd, plan.port)
-      recordStack(ref)
-      if (await waitFor(key, plan, ref, false)) {
-        if (isShared(repo)) summary.shared.push(key)
+      const { ref, port } = await startFresh(false)
+      recordStack(ref, port)
+      if (await waitFor(key, plan, ref, false, port)) {
+        if (shared) summary.shared.push(key)
         else summary.restarted.push(key)
-      }
-      else {
+      } else {
         summary.failed.push(key)
         cleanupFailedEntry(state, key, ref)
       }
@@ -200,23 +229,21 @@ async function ensureStack(
 
   if (tracked) delete state.stacks[key]
 
-  ensureDeps(key, repo, wt)
-  const shared = isShared(repo)
-
-  if (!shared) {
-    const occupants = pidsListeningOnPort(plan.port)
+  if (!shared && fixed) {
+    const port = servicePort(plan.port)
+    const occupants = pidsListeningOnPort(port)
     const adoptable = occupants.filter((pid) => pidCwd(pid) === plan.path)
     if (occupants.length > 0 && adoptable.length === occupants.length) {
       const pid = adoptable[0]
-      out(colors.yellow(`~ ${key}: adopting process ${pid} on port ${plan.port} (left running by an earlier devctl run)`))
+      out(colors.yellow(`~ ${key}: adopting process ${pid} on port ${port} (left running by an earlier devctl run)`))
       const ref: TStackState['ref'] = {
         pid,
         startToken: processStartToken(pid) ?? undefined,
         logFile: `${process.env.HOME ?? ''}/.devctl/logs/${key.replace(/\//g, '__')}.log`,
-        port: plan.port,
+        port,
       }
-      recordStack(ref)
-      if (await waitFor(key, plan, ref, false)) {
+      recordStack(ref, port)
+      if (await waitFor(key, plan, ref, false, port)) {
         summary.reused.push(key)
         return
       }
@@ -226,19 +253,19 @@ async function ensureStack(
       saveState(state)
     }
     if (occupants.length > 0 && !force) {
-      throw new Error(`port ${plan.port} is occupied by pid ${occupants.join(', ')}; stop it or re-run with --force`)
+      throw new Error(`port ${port} is occupied by pid ${occupants.join(', ')}; stop it or re-run with --force`)
     }
     for (const pid of occupants) {
-      out(colors.yellow(`~ --force: killing pid ${pid} on port ${plan.port}`))
+      out(colors.yellow(`~ --force: killing pid ${pid} on port ${port}`))
       killTree(pid)
     }
   }
 
-  const ref = start(key, plan.path, plan.env, plan.cmd, plan.port, undefined, { detached: shared })
-  recordStack(ref)
-  const ok = await waitFor(key, plan, ref, shared)
-  if (ok && !ref.pid) {
-    const pid = pidsListeningOnPort(plan.port)[0]
+  const { ref, port } = await startFresh(shared)
+  recordStack(ref, port)
+  const ok = await waitFor(key, plan, ref, shared, port)
+  if (ok && !ref.pid && port !== null) {
+    const pid = pidsListeningOnPort(port)[0]
     if (pid) {
       ref.pid = pid
       ref.startToken = processStartToken(pid) ?? undefined
@@ -265,42 +292,35 @@ function runHealthCommand(command: string): Promise<boolean> {
   })
 }
 
-function healthy(plan: TStackPlan): Promise<boolean> {
-  return plan.healthCommand ? runHealthCommand(plan.healthCommand) : tcpAlive(plan.port)
+function healthy(plan: TStackPlan, port: number | null): Promise<boolean> {
+  if (plan.healthCommand) return runHealthCommand(plan.healthCommand)
+  return port !== null ? tcpAlive(port) : Promise.resolve(false)
 }
 
-async function waitFor(key: string, plan: TStackPlan, ref: TStackState['ref'], launcherExits: boolean): Promise<boolean> {
-  if (!quiet()) process.stdout.write(`… ${key} starting on ${plan.port} `)
+async function waitFor(key: string, plan: TStackPlan, ref: TStackState['ref'], launcherExits: boolean, port: number | null): Promise<boolean> {
+  const where = port !== null ? ` on ${port}` : ''
+  if (!quiet()) process.stdout.write(`… ${key} starting${where} `)
   const deadline = Date.now() + plan.healthTimeoutMs
   while (Date.now() < deadline) {
-    if (await healthy(plan)) {
-      out(colors.green(`ready http://localhost:${plan.port}`))
+    if (await healthy(plan, port)) {
+      out(colors.green(`ready ${namedUrl(plan.name)}`))
       return true
     }
     if (!launcherExits && refExited(ref)) {
-      console.log(colors.red(`FAILED - process exited before passing health check on ${plan.port}`))
+      console.log(colors.red(`FAILED - process exited before passing health check${where}`))
       console.log(colors.dim(`--- output (${key}) ---`))
       console.log(refOutput(ref))
       process.exitCode = 1
-      await debugFailure({ key, cmd: plan.cmd, port: plan.port, cwd: plan.path, output: refOutput(ref, 120) })
-      return false
-    }
-    const recent = refOutput(ref, 15)
-    if (recent.includes('app crashed') || recent.includes('EADDRINUSE')) {
-      console.log(colors.red(`FAILED - process crashed before listening on ${plan.port}`))
-      console.log(colors.dim(`--- output (${key}) ---`))
-      console.log(refOutput(ref))
-      process.exitCode = 1
-      await debugFailure({ key, cmd: plan.cmd, port: plan.port, cwd: plan.path, output: refOutput(ref, 120) })
+      await debugFailure({ key, cmd: plan.cmd, port: servicePort(port), cwd: plan.path, output: refOutput(ref, 120) })
       return false
     }
     await sleep(1000)
   }
-  console.log(colors.red(`FAILED to listen on ${plan.port}`))
+  console.log(colors.red(`FAILED to become ready${where}`))
   console.log(colors.dim(`--- output (${key}) ---`))
   console.log(refOutput(ref))
   process.exitCode = 1
-  await debugFailure({ key, cmd: plan.cmd, port: plan.port, cwd: plan.path, output: refOutput(ref, 120) })
+  await debugFailure({ key, cmd: plan.cmd, port: servicePort(port), cwd: plan.path, output: refOutput(ref, 120) })
   return false
 }
 
@@ -310,10 +330,8 @@ function cleanupFailedEntry(state: TDevctlState, key: string, ref: TStackState['
   } catch {}
   const entry = state.stacks[key]
   if (!entry) return
-  if (entry.portlessName) {
-    try {
-      portlessRemoveAlias(entry.portlessName)
-    } catch {}
+  if (entry.portlessName && !portlessRemoveAlias(entry.portlessName)) {
+    out(colors.yellow(`~ ${entry.portlessName}: could not remove the portless route`))
   }
   delete state.stacks[key]
   saveState(state)
@@ -323,9 +341,9 @@ function planTargets(
   state: TDevctlState,
   targets: Array<{ repo: TRepoKey; branchOrName: string }>,
   stackDef: { name: string; services: Partial<Record<string, string>> } | undefined,
-): Array<{ key: string; repo: TRepoKey; target: string; port: number; shared: boolean; cmd: string }> {
+): Array<{ key: string; repo: TRepoKey; target: string; name: string; port: number | null; shared: boolean; cmd: string }> {
   const seen = new Set<string>()
-  const plan: Array<{ key: string; repo: TRepoKey; target: string; port: number; shared: boolean; cmd: string }> = []
+  const plan: Array<{ key: string; repo: TRepoKey; target: string; name: string; port: number | null; shared: boolean; cmd: string }> = []
   const visit = (repo: TRepoKey, branchOrName: string): void => {
     const wt = findWorktree(repo, branchOrName)
     const key = entryKey(wt)
@@ -333,7 +351,7 @@ function planTargets(
     seen.add(key)
     for (const dep of depsOf(state, repo, stackDef)) visit(dep.repo, dep.worktree ?? 'head')
     const svc = loadConfig().services[repo]
-    plan.push({ key, repo, target: wt.name, port: wt.port, shared: Boolean(svc?.shared), cmd: svc?.command ?? '' })
+    plan.push({ key, repo, target: wt.name, name: portlessDnsName(repo, wt), port: wt.port, shared: Boolean(svc?.shared), cmd: svc?.command ?? '' })
   }
   for (const t of targets) visit(t.repo, t.branchOrName)
   return plan
@@ -344,9 +362,12 @@ async function cmdUp(a: TArgs): Promise<void> {
   if (json) setQuiet(true)
   requireRunner()
   const state = loadState()
-  if (namedUrlsEnabled(state) && !(await portlessProxyUp())) {
-    out(colors.yellow('~ portless proxy is down - named URLs will not resolve until `devctl portless on`'))
-  }
+  try {
+    refreshSessions(state)
+    saveState(state)
+  } catch {}
+  requirePortless()
+  await ensureProxy()
   const target = a.positionals[0]
   const force = flag(a, 'force')
   let targets: Array<{ repo: TRepoKey; branchOrName: string }>
@@ -378,7 +399,7 @@ async function cmdUp(a: TArgs): Promise<void> {
     const plan = planTargets(state, targets, stackDef)
     if (plan.length === 0) out('dry-run: nothing to start')
     for (const p of plan) {
-      out(`${p.shared ? '(shared) ' : ''}${p.key} :${p.port}  ${p.cmd}`)
+      out(`${p.shared ? '(shared) ' : ''}${p.key} ${p.port !== null ? `:${p.port}` : namedUrl(p.name)}  ${p.cmd}`)
     }
     return
   }
@@ -550,23 +571,39 @@ function emitMutationResult(json: boolean, result: Record<string, unknown>): voi
 
 function runStopCommand(repo: TRepoKey): void {
   const svc = loadConfig().services[repo]
-  if (!svc?.shared || !svc.stopCommand) return
-  execFileSync('bash', ['-c', svc.stopCommand], { cwd: repoDir(repo), env: commandEnv(), stdio: 'ignore' })
+  if (!svc?.stopCommand) return
+  execFileSync('bash', ['-c', svc.stopCommand], { cwd: repoDir(repo), env: commandEnv(), stdio: 'ignore', timeout: 120_000 })
 }
 
 function stopRunningEntry(state: TDevctlState, key: string, force: boolean): void {
   const stack = state.stacks[key]
   if (!stack) {
-    runStopCommand(key.split('/')[0])
+    const name = key.split('/')[0]
+    if (loadConfig().services[name]?.stopCommand) runStopCommand(name)
     out(colors.dim(`${key} not tracked by devctl`))
     return
   }
+  const svc = loadConfig().services[stack.repo]
   const shared = isShared(stack.repo)
   try {
-    stopRef({ ...stack.ref, port: stack.port }, stack.key, { keepPort: shared, force })
+    if (svc?.stopCommand) {
+      stopRef({ ...stack.ref, port: servicePort(stack.port) }, stack.key, { keepPort: true, force })
+      runStopCommand(stack.repo)
+      if (stack.port !== null) {
+        let remaining = pidsListeningOnPort(stack.port)
+        for (let i = 0; i < 20 && remaining.length > 0; i++) {
+          sleepSync(500)
+          remaining = pidsListeningOnPort(stack.port)
+        }
+        if (remaining.length > 0 && force) for (const pid of remaining) killTree(pid)
+      }
+    } else {
+      stopRef({ ...stack.ref, port: servicePort(stack.port) }, stack.key, { keepPort: shared, force })
+    }
   } finally {
-    if (shared) runStopCommand(stack.repo)
-    portlessRemoveAlias(stack.portlessName ?? `${stack.repo}-${stack.worktree}`)
+    if (!portlessRemoveAlias(stack.portlessName ?? `${stack.repo}-${stack.worktree}`)) {
+      out(colors.yellow(`~ ${stack.portlessName ?? stack.key}: could not remove the portless route`))
+    }
     delete state.stacks[key]
     saveState(state)
   }
@@ -578,20 +615,30 @@ async function restartStack(key: string, state: TDevctlState, force: boolean): P
   if (!stack || !(await tabAlive(stack))) return
   const def = stack.stack ? state.stackDefs[stack.stack] : undefined
   out(colors.yellow(`~ restarting ${key} for new env`))
-  const ref: TStackState['ref'] = { ...stack.ref, port: stack.port }
+  const svc = loadConfig().services[stack.repo]
+  const fixed = isShared(stack.repo) || (svc !== undefined && usesFixedPort(svc))
+  const port = servicePort(stack.port)
+  const ref: TStackState['ref'] = { ...stack.ref, port }
   stopRef(ref, key, { force })
-  for (let i = 0; i < 20 && (await tcpAlive(stack.port)); i++) await sleep(500)
-  if (await tcpAlive(stack.port)) throw new Error(`port ${stack.port} still occupied after stopping ${key} - re-run with --force`)
+  if (fixed) {
+    for (let i = 0; i < 20 && (await tcpAlive(port)); i++) await sleep(500)
+    if (await tcpAlive(port)) throw new Error(`port ${port} still occupied after stopping ${key} - re-run with --force`)
+  }
   const wt = findWorktree(stack.repo, stack.worktree)
   const plan = planStack(stack.repo as TRepoKey, wt, state, def)
-  const newRef = start(key, plan.path, plan.env, plan.cmd, plan.port, undefined, { detached: isShared(stack.repo) })
-  recordOnly(state, key, stack, newRef)
-  if (await waitFor(key, plan, newRef, isShared(stack.repo))) return
+  const named = namedUrl(plan.name)
+  const startCmd = fixed ? plan.cmd : portlessRunCommand(plan.name, plan.cmd)
+  const startEnv = fixed ? plan.env : { ...plan.env, PORTLESS_PORT: String(proxyPort()) }
+  const newRef = start(key, plan.path, startEnv, startCmd, fixed ? servicePort(plan.port) : 0, undefined, { detached: isShared(stack.repo) })
+  const newPort = fixed ? plan.port : await discoverPort(plan.name)
+  if (newPort !== null) newRef.port = newPort
+  recordOnly(state, key, stack, newRef, newPort, named)
+  if (await waitFor(key, plan, newRef, isShared(stack.repo), newPort)) return
   cleanupFailedEntry(state, key, newRef)
 }
 
-function recordOnly(state: TDevctlState, key: string, old: TStackState, ref: TStackState['ref']): void {
-  const entry: TStackState = { ...old, ref, startedAt: new Date().toISOString() }
+function recordOnly(state: TDevctlState, key: string, old: TStackState, ref: TStackState['ref'], port: number | null, url: string): void {
+  const entry: TStackState = { ...old, ref, port, url, startedAt: new Date().toISOString() }
   state.stacks[entry.key] = entry
   saveState(state)
 }
@@ -758,12 +805,11 @@ async function cmdStatus(a: TArgs): Promise<void> {
   const json = flag(a, 'json')
   const check = flag(a, 'check')
   const state = loadState()
-  const named = namedUrlsEnabled(state)
   const rows = await Promise.all(
     Object.values(state.stacks).map(async (s) => ({
       ...s,
       stackLabel: s.stack ? state.stackDefs[s.stack]?.label : undefined,
-      ...(await stackStatus(s, named)),
+      ...(await stackStatus(s)),
     })),
   )
 
@@ -798,7 +844,7 @@ function cmdWhich(a: TArgs): void {
   }
   for (const wt of all) {
     const branch = wt.branch ? colors.dim(` [${wt.branch}]`) : colors.red(' [detached]')
-    console.log(`${wt.repo.padEnd(8)} ${wt.name.padEnd(40)} :${wt.port}${branch}`)
+    console.log(`${wt.repo.padEnd(8)} ${wt.name.padEnd(40)} ${wt.port !== null ? `:${wt.port}` : portlessDnsName(wt.repo, wt)}${branch}`)
   }
 }
 
@@ -810,6 +856,11 @@ function cmdLogs(a: TArgs): void {
   const lines = linesRaw === undefined ? 50 : Number(linesRaw)
   if (!Number.isInteger(lines) || lines < 1 || lines > 10_000) throw new UsageError('--lines must be an integer between 1 and 10000')
   const t = parseTarget(target)
+  const svc = loadConfig().services[t.repo]
+  if (svc?.logsCommand) {
+    execFileSync('bash', ['-c', svc.logsCommand], { cwd: repoDir(t.repo), env: commandEnv(), stdio: 'inherit', timeout: 60_000 })
+    return
+  }
   const key = entryKey(t.worktree)
   const stack = state.stacks[key]
   const file = stack?.ref?.logFile ?? `${process.env.HOME}/.devctl/logs/${key.replace(/\//g, '__')}.log`
@@ -819,12 +870,162 @@ function cmdLogs(a: TArgs): void {
   if (!fs.existsSync(file)) throw new Error(`log file does not exist yet: ${file}`)
   let offset = fs.statSync(file).size
   fs.watchFile(file, { interval: 500 }, (current) => {
-    if (current.size < offset) offset = 0
-    if (current.size === offset) return
-    const stream = fs.createReadStream(file, { start: offset, end: current.size - 1 })
-    stream.pipe(process.stdout, { end: false })
-    offset = current.size
+    try {
+      if (current.size === 0 && !fs.existsSync(file)) {
+        fs.unwatchFile(file)
+        console.error(colors.dim(`log file removed: ${file}`))
+        return
+      }
+      if (current.size < offset) offset = 0
+      if (current.size === offset) return
+      const stream = fs.createReadStream(file, { start: offset, end: current.size - 1 })
+      stream.on('error', (error) => console.error(colors.dim(`log read error: ${error.message}`)))
+      stream.pipe(process.stdout, { end: false })
+      offset = current.size
+    } catch (error) {
+      console.error(colors.dim(`log watch error: ${error instanceof Error ? error.message : String(error)}`))
+    }
   })
+}
+
+interface TSessionRow {
+  session: TAgentSession
+  key: string
+  link: string | undefined
+  suggestion: string | null
+  repo: string | null
+}
+
+function sessionRows(state: TDevctlState): TSessionRow[] {
+  const agents = state.agents ?? {}
+  const links = state.links ?? {}
+  return Object.values(agents).map((session) => {
+    const key = sessionKey(session)
+    return { session, key, link: links[key], suggestion: suggestStack(session, state), repo: repoForCwd(session.cwd) }
+  })
+}
+
+function byRecency(a: TSessionRow, b: TSessionRow): number {
+  return (b.session.updatedAt ?? '').localeCompare(a.session.updatedAt ?? '')
+}
+
+function cmdAgents(a: TArgs): void {
+  const json = flag(a, 'json')
+  if (json) setQuiet(true)
+  const state = loadState()
+  if (flag(a, 'refresh')) {
+    const result = refreshSessions(state)
+    saveState(state)
+    if (!json) out(colors.dim(`refreshed: ${result.total} session(s), ${result.added} new, ${result.updated} updated, ${result.archived} archived`))
+  }
+  if (Object.keys(state.agents ?? {}).length === 0) {
+    if (json) {
+      console.log(JSON.stringify({ sessions: [] }, null, 2))
+      return
+    }
+    out(colors.dim('no agent sessions indexed yet - run `devctl agents refresh`'))
+    return
+  }
+  const stack = a.positionals[0]
+  let rows = sessionRows(state)
+  if (stack) rows = rows.filter((row) => row.link === stack)
+  else if (flag(a, 'unassigned')) rows = rows.filter((row) => !row.link)
+  rows.sort(byRecency)
+  if (json) {
+    console.log(
+      JSON.stringify(
+        {
+          sessions: rows.map((row) => ({
+            agent: row.session.agent,
+            id: row.session.id,
+            title: row.session.title,
+            branch: row.session.branches[0] ?? null,
+            cwd: row.session.cwd,
+            repo: row.repo,
+            link: row.link ?? null,
+            suggestion: row.suggestion,
+            note: row.session.note ?? null,
+            updatedAt: row.session.updatedAt,
+            state: row.session.state ?? 'active',
+            resume: adapterFor(row.session.agent)?.resume(row.session) ?? null,
+          })),
+        },
+        null,
+        2,
+      ),
+    )
+    return
+  }
+  if (rows.length === 0) {
+    out(colors.dim(stack ? `no sessions linked to ${stack}` : 'no sessions'))
+    return
+  }
+  for (const row of rows) {
+    const where = row.link ? colors.green(`-> ${row.link}`) : row.suggestion ? colors.dim(`~ ${row.suggestion}`) : colors.dim('unassigned')
+    const archived = row.session.state === 'archived' ? colors.dim(' [archived]') : ''
+    out(`${row.session.agent.padEnd(9)} ${(row.session.title || '(untitled)').padEnd(40)} ${where}${archived}`)
+    out(colors.dim(`  id ${row.session.id}${row.session.branches[0] ? `  branch ${row.session.branches[0]}` : ''}${row.repo ? `  repo ${row.repo}` : ''}`))
+    if (row.session.note) out(colors.dim(`  note ${row.session.note}`))
+  }
+  out(colors.dim('assign: devctl agent assign <stack> <agent> <id>    resume: devctl agent resume <stack> [--agent X]'))
+}
+
+function cmdAgent(args: string[]): void {
+  const sub = args[0]
+  const usage = 'usage: devctl agent assign <stack> <agent> <id> | unassign <agent> <id> | note <agent> <id> <text> | resume <stack> [--agent X] [--id Y]'
+  const state = loadState()
+
+  if (sub === 'assign') {
+    const [stack, agent, id] = args.slice(1)
+    if (!stack || !agent || !id) throw new UsageError(usage)
+    state.links = { ...(state.links ?? {}), [`${agent}:${id}`]: stack }
+    saveState(state)
+    out(`linked ${agent}:${id} -> ${stack}`)
+    return
+  }
+  if (sub === 'unassign') {
+    const [agent, id] = args.slice(1)
+    if (!agent || !id) throw new UsageError(usage)
+    const links = { ...(state.links ?? {}) }
+    delete links[`${agent}:${id}`]
+    state.links = links
+    saveState(state)
+    out(`unlinked ${agent}:${id}`)
+    return
+  }
+  if (sub === 'note') {
+    const [agent, id, ...text] = args.slice(1)
+    if (!agent || !id || text.length === 0) throw new UsageError(usage)
+    const key = `${agent}:${id}`
+    const session = (state.agents ?? {})[key]
+    if (!session) throw new Error(`unknown session ${key}`)
+    session.note = text.join(' ')
+    saveState(state)
+    out(`noted ${key}`)
+    return
+  }
+  if (sub === 'resume') {
+    const a = parseArgs(args.slice(1), { string: ['agent', 'id'] }, 'agent resume')
+    const stack = a.positionals[0]
+    if (!stack) throw new UsageError(usage)
+    const links = state.links ?? {}
+    const agent = opt(a, 'agent')
+    const id = opt(a, 'id')
+    let candidates = Object.values(state.agents ?? {}).filter((session) => links[sessionKey(session)] === stack)
+    if (agent) candidates = candidates.filter((session) => session.agent === agent)
+    if (id) candidates = candidates.filter((session) => session.id === id)
+    candidates.sort((x, y) => (y.updatedAt ?? '').localeCompare(x.updatedAt ?? ''))
+    const session = candidates[0]
+    if (!session) throw new Error(`no session linked to ${stack}${agent ? ` for ${agent}` : ''} - see devctl agents`)
+    const adapter = adapterFor(session.agent)
+    if (!adapter) throw new Error(`no adapter for ${session.agent}`)
+    const command = adapter.resume(session)
+    out(colors.dim(`resuming ${session.agent} ${session.id} in ${session.cwd || process.cwd()}`))
+    execFileSync(command[0], command.slice(1), { cwd: session.cwd || undefined, env: commandEnv(), stdio: 'inherit' })
+    return
+  }
+
+  throw new UsageError(usage)
 }
 
 async function cmdDiagnose(a: TArgs): Promise<void> {
@@ -840,8 +1041,8 @@ async function cmdDiagnose(a: TArgs): Promise<void> {
   const plan = planStack(t.repo, wt, state, undefined)
   const file = tracked?.ref?.logFile ?? `${process.env.HOME}/.devctl/logs/${key.replace(/\//g, '__')}.log`
   const output = fs.existsSync(file) ? tailFile(file, 120) : ''
-  out(colors.dim(`--- diagnosing ${key} (port ${plan.port}) ---`))
-  const diagnosis = await runDiagnosis({ key, cmd: plan.cmd, port: plan.port, cwd: plan.path, output })
+  out(colors.dim(`--- diagnosing ${key} (port ${plan.port ?? 'portless'}) ---`))
+  const diagnosis = await runDiagnosis({ key, cmd: plan.cmd, port: servicePort(plan.port), cwd: plan.path, output })
   if (!diagnosis.trim()) throw new Error('no diagnosis produced (is the debug agent configured?)')
   if (json) {
     console.log(JSON.stringify({ ok: true, key, diagnosis }, null, 2))
@@ -866,25 +1067,29 @@ async function cmdDoctor(a: TArgs): Promise<void> {
 
   add('config', 'ok', resolveConfigPath())
   add('state', fs.existsSync(STATE_FILE) ? 'ok' : 'warn', fs.existsSync(STATE_FILE) ? STATE_FILE : `${STATE_FILE} has not been created yet`)
+  const quarantined = fs.existsSync(DEVCTL_DIR) ? fs.readdirSync(DEVCTL_DIR).filter((name) => name.startsWith('state.jsonl.corrupt-')) : []
+  add(
+    'store',
+    quarantined.length > 0 ? 'warn' : 'ok',
+    quarantined.length > 0 ? `${quarantined.length} quarantined log file(s) in ${DEVCTL_DIR}` : `version ${STATE_VERSION}`,
+  )
   add('git', binary('git') ? 'ok' : 'error', binary('git') ? 'available' : 'not found in PATH')
   add('runner', !cfg.herdr.enabled || binary('herdr') ? 'ok' : 'error', cfg.herdr.enabled ? (binary('herdr') ? 'herdr available' : 'herdr enabled but not found') : 'plain detached process mode')
   const portlessCli = portlessAvailable()
   const portlessProxy = portlessCli ? await portlessProxyUp() : false
-  const portlessOn = portlessCli && state.portless !== false
   add(
     'portless',
-    portlessCli && portlessProxy && portlessOn ? 'ok' : 'warn',
+    !portlessCli ? 'error' : portlessProxy ? 'ok' : 'warn',
     !portlessCli
-      ? 'not installed; using http://localhost:<port>'
-      : !portlessOn
-        ? 'disabled; run `devctl portless on` for named URLs'
-        : portlessProxy
-          ? `proxy up on ${proxyPort()}`
-          : 'proxy down; run `devctl portless on` for named URLs',
+      ? 'not installed or not runnable (needs Node 24+) - run `pnpm install` in the devctl checkout'
+      : portlessProxy
+        ? `proxy up on ${proxyPort()}`
+        : 'proxy down; run `devctl portless start`',
   )
-  if (portlessCli && portlessProxy && portlessOn) {
+  if (portlessCli && portlessProxy) {
+    const routes = new Set(listRoutes().map((route) => route.host))
     const missing = Object.values(state.stacks).filter(
-      (entry) => !isShared(entry.repo) && entry.portlessName && !hasRoute(`${entry.portlessName}.localhost`),
+      (entry) => !isShared(entry.repo) && entry.portlessName && !routes.has(`${entry.portlessName}.localhost`),
     )
     if (missing.length > 0) {
       add('portless:routes', 'warn', `${missing.length} running service(s) without a route - re-run \`devctl up <stack>\` to re-register`)
@@ -924,7 +1129,7 @@ async function cmdDoctor(a: TArgs): Promise<void> {
     }
     if (cfg.services[entry.repo].shared) continue
     const alive = await tabAlive(entry)
-    const listening = await tcpAlive(entry.port)
+    const listening = entry.port !== null ? await tcpAlive(entry.port) : false
     if (!alive && listening) {
       add(`orphan:${entry.key}`, 'warn', `port ${entry.port} is listening but the tracked runner session is gone - down ${entry.key} or --force`)
     } else if (!alive && !listening) {
@@ -948,75 +1153,54 @@ async function cmdPortless(a: TArgs): Promise<void> {
   const json = flag(a, 'json')
   if (json) setQuiet(true)
   const bin = portlessBin()
-  const state = loadState()
 
   if (!sub || sub === 'status') {
     const available = portlessAvailable()
     const proxyUp = available ? await portlessProxyUp() : false
-    const routes = available ? [...activeRoutes()] : []
-    const enabled = namedUrlsEnabled(state)
+    const routes = available ? listRoutes() : []
     if (json) {
-      console.log(JSON.stringify({ installed: Boolean(bin), usable: available, bin, enabled, proxyUp, port: proxyPort(), routes }, null, 2))
+      console.log(
+        JSON.stringify(
+          { installed: Boolean(bin), usable: available, bin, enabled: available, proxyUp, port: proxyPort(), routes: routes.map((r) => r.host) },
+          null,
+          2,
+        ),
+      )
       return
     }
     out(`portless: ${available ? 'installed' : bin ? 'installed but not runnable (needs Node 24+)' : 'not installed'}`)
     if (bin) out(colors.dim(`  ${bin}`))
-    out(`  named URLs: ${enabled ? 'on' : 'off'}`)
     out(`  proxy: ${proxyUp ? `up on ${proxyPort()}` : 'down'}`)
     out(`  routes: ${routes.length}`)
-    for (const route of routes) out(colors.dim(`    https://${route}`))
+    for (const route of routes) out(colors.dim(`    https://${route.host} -> localhost:${route.port}`))
     return
   }
 
-  if (sub !== 'on' && sub !== 'off') {
-    throw new UsageError('usage: devctl portless on [--port N] [--no-restart] [--force] | off [--no-restart] [--force] | status [--json]')
-  }
-  if (sub === 'on' && !portlessAvailable()) {
-    throw new Error('portless is not usable - install it with `pnpm install` in the devctl checkout (needs Node 24+)')
-  }
-
-  if (sub === 'on') {
+  if (sub === 'start') {
     const portRaw = opt(a, 'port')
-    const port = portRaw === undefined ? undefined : Number(portRaw)
-    if (port !== undefined && (!Number.isInteger(port) || port <= 0 || port > 65535)) throw new UsageError('--port must be between 1 and 65535')
+    const port = portRaw === undefined ? proxyPort() : Number(portRaw)
+    if (!Number.isInteger(port) || port <= 0 || port > 65535) throw new UsageError('--port must be between 1 and 65535')
     startProxy(port)
-  } else {
+    out(colors.green(`portless proxy started on ${port}`))
+    emitMutationResult(json, { ok: true, proxy: 'started', port })
+    return
+  }
+
+  if (sub === 'stop') {
     stopProxy()
-  }
-  state.portless = sub === 'on'
-  saveState(state)
-
-  const running = Object.values(state.stacks).filter(
-    (entry): entry is TStackState & { portlessName: string } => !isShared(entry.repo) && Boolean(entry.portlessName),
-  )
-  for (const entry of running) {
-    if (sub === 'on') portlessAlias(entry.portlessName, entry.port)
-    else portlessRemoveAlias(entry.portlessName)
+    out(colors.green('portless proxy stopped'))
+    emitMutationResult(json, { ok: true, proxy: 'stopped' })
+    return
   }
 
-  const restarted: string[] = []
-  if (running.length > 0 && !flag(a, 'no-restart')) {
-    requireRunner()
-    for (const entry of running) {
-      await restartStack(entry.key, state, flag(a, 'force'))
-      restarted.push(entry.key)
-    }
-  }
-
-  const detail = restarted.length > 0
-    ? `; restarted ${restarted.join(', ')}`
-    : running.length > 0
-      ? '; re-run `devctl up <stack>` to refresh service env'
-      : ''
-  out(colors.green(`portless ${sub}${detail}`))
-  emitMutationResult(json, { ok: true, portless: sub === 'on', routes: running.length, restarted })
+  throw new UsageError('usage: devctl portless status [--json] | start [--port N] | stop')
 }
 
 function cmdAttach(a: TArgs): void {
   requireRunner()
   const target = a.positionals[0]
   const entry = target ? loadState().stacks[target] : undefined
-  if (entry && focusTab({ ...entry.ref, port: entry.port })) {
+  if (entry && focusTab({ ...entry.ref, port: servicePort(entry.port) })) {
     out(colors.green(`focused ${target}`))
     return
   }
@@ -1154,7 +1338,7 @@ function cmdContext(a: TArgs): void {
       continue
     }
     const running = row ? (row.ref.workspaceId || row.ref.pid ? true : false) : false
-    const url = row ? `, http://localhost:${row.port}` : ''
+    const url = row ? `, ${row.portlessName ? namedUrl(row.portlessName) : row.url}` : ''
     lines.push(`- ${repo}/${target}: ${running ? 'running' : 'not running'}${url}`)
   }
   for (const row of Object.values(state.stacks)) {
@@ -1163,10 +1347,20 @@ function cmdContext(a: TArgs): void {
     lines.push(`- ${row.repo}/${row.worktree}: shared dep, http://localhost:${row.port}`)
   }
   lines.push('', 'Logs: devctl logs <service>/<worktree> --lines 100. Health: devctl status --check.')
+  const links = state.links ?? {}
+  const related = Object.values(state.agents ?? {})
+    .filter((session) => links[sessionKey(session)] === name)
+    .sort((x, y) => (y.updatedAt ?? '').localeCompare(x.updatedAt ?? ''))
+  if (related.length > 0) {
+    lines.push('', '## Agents and sessions')
+    for (const session of related) {
+      lines.push(`- ${session.agent}: ${session.title || '(untitled)'}${session.note ? ` - ${session.note}` : ''} (id ${session.id})`)
+    }
+  }
   console.log(lines.join('\n'))
 }
 
-const COMPLETION_COMMANDS = 'up down kill restart status which env use attach portless logs doctor config stack completion --version --help'
+const COMPLETION_COMMANDS = 'up down kill restart status which env use attach portless logs doctor config stack agents agent completion --version --help'
 
 function cmdCompletion(a: TArgs): void {
   const shell = a.positionals[0]
@@ -1273,7 +1467,7 @@ async function cmdStack(rawArgs: string[]): Promise<void> {
     const a = parseArgs(rawArgs.slice(1), {}, 'stack add')
     const [name, repo, wt] = a.positionals
     if (!name || !repo || !wt || a.positionals.length !== 3) throw new UsageError('usage: devctl stack add <name> <repo> <worktree|branch|test|prod|none>')
-    if (!REPOS_SET.has(repo)) throw new UsageError(`unknown repo "${repo}"`)
+    if (!repoKeysFromRegistry().includes(repo)) throw new UsageError(`unknown repo "${repo}"`)
     if (isShared(repo)) throw new UsageError(`"${repo}" is a shared service - it joins stacks automatically via dependsOn, not as a member`)
     if (wt !== 'none' && wt !== 'test' && wt !== 'prod') {
       findWorktree(repo as TRepoKey, wt)
@@ -1399,13 +1593,17 @@ const GLOBAL_USAGE = `usage: devctl <command>
   logs <repo/branch> [--lines N] [--follow]
   diagnose <service>/<worktree> [--json]
                                  hand a service's recent logs to the debug agent for a root cause
+  agents [stack] [--refresh] [--unassigned] [--json]
+                                 agent sessions (claude/codex/opencode/pi) and the stack they belong to
+  agent assign|unassign|note|resume ...
+                                 link a session to a stack, annotate it, or resume it
   config show [--json]           resolved config with secrets redacted
   config get <path>              read one value (dotted path, e.g. debug.model)
   config set <path> <value>      write one value; validates before saving
   context [stack]                markdown status of a stack (default: current) for pasting to agents
   doctor [--json]                check config, binaries, repos, ports, env files, and state
   attach [workspace]             focus a herdr workspace
-  portless on|off|status         start/stop the portless proxy (named URLs) and register routes
+  portless start|stop|status       manage the portless proxy (named URLs)
   completion bash|zsh            print shell completion script
   --version                      print devctl version
 
@@ -1452,11 +1650,24 @@ const HELP: Record<string, string> = {
   attach: `usage: devctl attach [workspace]`,
   logs: `usage: devctl logs <repo/branch> [--lines N] [--follow]
 
-  --lines defaults to 50 (1..10000). --follow tails the log.`,
+  Runs the service's logsCommand when one is set (for example a detached container), otherwise
+  tails the captured process log. --lines defaults to 50 (1..10000). --follow tails the file.`,
   diagnose: `usage: devctl diagnose <service>/<worktree> [--json]
-
   Runs the configured debug agent on the service's recent logs and prints ROOT CAUSE / FIX.
   Works whether the service is running, failed, or stopped. Configure via the "debug" block.`,
+  agents: `usage: devctl agents [stack] [--refresh] [--unassigned] [--json]
+
+  Lists claude, codex, opencode, and pi sessions found on this machine with the stack each is
+  linked to. --refresh rescans the stores first; --unassigned shows the ones with no link.
+  A link always wins over a suggestion. Sessions you run from the repo root are listed, not
+  guessed, so link them with "devctl agent assign".`,
+  agent: `usage: devctl agent assign <stack> <agent> <id>
+              devctl agent unassign <agent> <id>
+              devctl agent note <agent> <id> <text>
+              devctl agent resume <stack> [--agent X] [--id Y]
+
+  assign links a session to a stack; unassign removes the link; note annotates it; resume runs
+  the agent's own resume command in the session's directory.`,
   doctor: `usage: devctl doctor [--json]`,
   config: `usage: devctl config show [--json] | config get <path> | config set <path> <value>
 
@@ -1468,15 +1679,14 @@ const HELP: Record<string, string> = {
 
   Prints markdown describing the stack (services, targets, state, URLs) - paste it into an agent.
   Pass a stack name to target one.`,
-  portless: `usage: devctl portless on [--port N] [--no-restart] [--force]
-              devctl portless off [--no-restart] [--force]
+  portless: `usage: devctl portless start [--port N]
+              devctl portless stop
               devctl portless status [--json]
 
-  on starts the portless proxy and registers a route per running service; off stops the proxy
-  and removes routes, so named URLs are replaced by http://localhost:<port>. Both restart the
-  running services so their env reflects the mode, unless --no-restart is passed.
-  status prints whether portless is installed, whether named URLs are on, and the active routes.
-  Without portless, devctl stays on plain localhost ports.`,
+  portless is required. start runs the portless proxy (default 1355 so it does not need sudo);
+  stop stops it; status prints whether portless is installed, the proxy port, and the routes.
+  Services portless can drive get a port chosen by portless; services that publish their own
+  port register a static route instead.`,
   completion: `usage: devctl completion bash|zsh
 
   Print a completion script. zsh: eval "$(devctl completion zsh)". bash: eval "$(devctl completion bash)".`,
@@ -1540,13 +1750,17 @@ async function runCommand(rawArgv: string[]): Promise<void> {
       }
       return cmdStack(args)
     case 'portless':
-      return cmdPortless(parseArgs(args, { string: ['port'], boolean: ['json', 'force', 'no-restart'] }, 'portless'))
+      return cmdPortless(parseArgs(args, { string: ['port'], boolean: ['json'] }, 'portless'))
     case 'attach':
       return cmdAttach(parseArgs(args, {}, 'attach'))
     case 'logs':
       return cmdLogs(parseArgs(args, { string: ['lines'], boolean: ['follow'] }, 'logs'))
     case 'diagnose':
       return cmdDiagnose(parseArgs(args, { boolean: ['json'] }, 'diagnose'))
+    case 'agents':
+      return cmdAgents(parseArgs(args, { boolean: ['json', 'refresh', 'unassigned'] }, 'agents'))
+    case 'agent':
+      return cmdAgent(args)
     case 'doctor':
       return cmdDoctor(parseArgs(args, { boolean: ['json'] }, 'doctor'))
     case 'config':
@@ -1567,23 +1781,49 @@ async function runCommand(rawArgv: string[]): Promise<void> {
   }
 }
 
+function reportFailure(err: unknown): void {
+  reportStoreWarnings()
+  console.error(colors.red(`devctl: ${err instanceof Error ? err.message : String(err)}`))
+  try {
+    fs.mkdirSync(`${process.env.HOME}/.devctl/logs`, { recursive: true })
+    fs.appendFileSync(
+      `${process.env.HOME}/.devctl/logs/devctl.log`,
+      `${new Date().toISOString()} ERROR ${err instanceof Error ? err.stack ?? err.message : String(err)}\n`,
+    )
+  } catch {}
+}
+
+function installProcessHandlers(): void {
+  process.on('unhandledRejection', (reason) => {
+    reportFailure(reason)
+    process.exitCode = 1
+  })
+  process.on('uncaughtException', (error) => {
+    reportFailure(error)
+    process.exit(1)
+  })
+  process.once('SIGINT', () => {
+    console.error(colors.dim('devctl: interrupted'))
+    process.exit(130)
+  })
+  process.once('SIGTERM', () => {
+    console.error(colors.dim('devctl: terminated'))
+    process.exit(143)
+  })
+}
+
 async function main(): Promise<void> {
+  installProcessHandlers()
   const { argv, notify } = splitNotify(process.argv.slice(2))
   try {
     await runCommand(argv)
+    reportStoreWarnings()
     if (notify) systemNotify(process.exitCode === 1 ? `${notify} - failed (run devctl status)` : `${notify} - done`)
   } catch (err) {
-    console.error(colors.red(`devctl: ${err instanceof Error ? err.message : String(err)}`))
-    try {
-      fs.mkdirSync(`${process.env.HOME}/.devctl/logs`, { recursive: true })
-      fs.appendFileSync(
-        `${process.env.HOME}/.devctl/logs/devctl.log`,
-        `${new Date().toISOString()} ERROR ${err instanceof Error ? err.stack ?? err.message : String(err)}\n`,
-      )
-    } catch {}
+    reportFailure(err)
     if (notify) systemNotify(`${notify} - failed: ${(err instanceof Error ? err.message : String(err)).split('\n')[0]}`)
-    process.exit(1)
+    process.exitCode = 1
   }
 }
 
-main()
+void main()
