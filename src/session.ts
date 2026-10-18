@@ -21,8 +21,10 @@ function herdrEnabled(): boolean {
   return loadConfig().herdr.enabled === true
 }
 
+const HERDR_TIMEOUT_MS = 15_000
+
 function h(args: string[]): Record<string, unknown> {
-  const out = execFileSync('herdr', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+  const out = execFileSync('herdr', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: HERDR_TIMEOUT_MS })
   try {
     return JSON.parse(out) as Record<string, unknown>
   } catch {
@@ -31,7 +33,7 @@ function h(args: string[]): Record<string, unknown> {
 }
 
 function raw(args: string[]): void {
-  execFileSync('herdr', args, { stdio: ['ignore', 'pipe', 'pipe'] })
+  execFileSync('herdr', args, { stdio: ['ignore', 'pipe', 'pipe'], timeout: HERDR_TIMEOUT_MS })
 }
 
 interface TWorkspaceRef {
@@ -102,7 +104,7 @@ export function start(
     const res = h(args).result as { tab: { tab_id: string }; root_pane: { pane_id: string } }
     const exitMarker = `__DEVCTL_EXITED_${Date.now()}__`
     const teed = `{ ${prefixed}; } 2>&1 | tee -a ${shQuote(logFile)}; printf '%s\\n' '${exitMarker}' >> ${shQuote(logFile)}`
-    execFileSync('herdr', ['pane', 'run', res.root_pane.pane_id, teed], { stdio: 'ignore' })
+    execFileSync('herdr', ['pane', 'run', res.root_pane.pane_id, teed], { stdio: 'ignore', timeout: HERDR_TIMEOUT_MS })
     discardPlaceholder(ws)
     const shellPid = paneProcessInfo(res.root_pane.pane_id)?.shell_pid
     return {
@@ -134,7 +136,7 @@ export function rerunIn(ref: TProcRef, env: Record<string, string>, command: str
   const prefixed = `${envExports(env)}${command}`
   if (ref.paneId) {
     const wrapped = ref.logFile ? `{ ${prefixed}; } 2>&1 | tee -a ${shQuote(ref.logFile)}` : prefixed
-    execFileSync('herdr', ['pane', 'run', ref.paneId, wrapped], { stdio: 'ignore' })
+    execFileSync('herdr', ['pane', 'run', ref.paneId, wrapped], { stdio: 'ignore', timeout: HERDR_TIMEOUT_MS })
   }
 }
 
@@ -175,7 +177,7 @@ function paneIdForTab(tabId: string): string | null {
 
 function paneProcessInfo(paneId: string): { shell_pid: number; foreground_process_group_id?: number } | null {
   try {
-    const res = execFileSync('herdr', ['pane', 'process-info', '--pane', paneId], { encoding: 'utf8' })
+    const res = execFileSync('herdr', ['pane', 'process-info', '--pane', paneId], { encoding: 'utf8', timeout: HERDR_TIMEOUT_MS })
     const parsed = JSON.parse(res) as {
       result: { process_info: { shell_pid: number; foreground_process_group_id?: number } }
     }
@@ -323,7 +325,7 @@ export function focusTab(ref: TProcRef): boolean {
 export function requireRunner(): void {
   if (herdrEnabled()) {
     try {
-      execFileSync('herdr', ['--help'], { stdio: 'ignore' })
+      execFileSync('herdr', ['--help'], { stdio: 'ignore', timeout: 5_000 })
     } catch {
       throw new Error('herdr not found - install it or set herdr.enabled=false in devctl.config.json')
     }

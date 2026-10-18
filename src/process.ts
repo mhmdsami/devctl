@@ -13,7 +13,7 @@ export function isAlive(pid: number): boolean {
 
 export function processStartToken(pid: number): string | null {
   try {
-    return execFileSync('ps', ['-o', 'lstart=', '-p', String(pid)], { encoding: 'utf8' }).trim() || null
+    return execFileSync('ps', ['-o', 'lstart=', '-p', String(pid)], { encoding: 'utf8', timeout: 5_000 }).trim() || null
   } catch {
     return null
   }
@@ -26,7 +26,7 @@ export function processMatches(pid: number, startToken?: string): boolean {
 
 export function pgidOf(pid: number): number | null {
   try {
-    const out = execFileSync('ps', ['-o', 'pgid=', '-p', String(pid)], { encoding: 'utf8' }).trim()
+    const out = execFileSync('ps', ['-o', 'pgid=', '-p', String(pid)], { encoding: 'utf8', timeout: 5_000 }).trim()
     return Number(out) || null
   } catch {
     return null
@@ -35,7 +35,7 @@ export function pgidOf(pid: number): number | null {
 
 function parentPidOf(pid: number): number | null {
   try {
-    return Number(execFileSync('ps', ['-o', 'ppid=', '-p', String(pid)], { encoding: 'utf8' }).trim()) || null
+    return Number(execFileSync('ps', ['-o', 'ppid=', '-p', String(pid)], { encoding: 'utf8', timeout: 5_000 }).trim()) || null
   } catch {
     return null
   }
@@ -104,7 +104,7 @@ export function pidCwd(pid: number): string | null {
 
 export function pidsListeningOnPort(port: number): number[] {
   try {
-    const out = execFileSync('lsof', ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN', '-t'], { encoding: 'utf8' })
+    const out = execFileSync('lsof', ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN', '-t'], { encoding: 'utf8', timeout: 5_000 })
     return [...new Set(out.split('\n').map(Number).filter(Boolean))]
   } catch {
     return []
