@@ -53,12 +53,22 @@ URLs come from `status --json` (`url`, and `portlessUrl`). They look like `https
 
 ```sh
 devctl agents [stack] --refresh   # claude/codex/opencode/pi sessions, with the stack each is linked to
-devctl agent assign <stack> <agent> <id>
+devctl agent register <stack>     # link YOUR session to the stack you are working on
 devctl agent note <agent> <id> "text"
 devctl agent resume <stack> [--agent X] [--id Y]
 ```
 
-Sessions are listed, not guessed (you often run agents from the repo root). Link the ones that belong to a stack; then `devctl context <stack>` includes them. This works without herdr.
+When you start working on a stack, register your own session so it can be found later:
+
+```sh
+devctl agent register ft-my-feature
+```
+
+It detects the agent and session id from the environment (opencode and claude expose one) or
+falls back to the newest session for that agent, then links it to the stack. `devctl up <stack>`
+also registers the current session automatically. Link sessions you did not start with
+`devctl agent assign <stack> <agent> <id>`. A link is never guessed from the cwd, because agents
+often run from the repo root. `devctl context <stack>` then includes the linked sessions.
 
 ## Env and targeting
 

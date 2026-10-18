@@ -23,6 +23,7 @@ devctl config set <path> <value>         # write one value; validated before sav
 devctl context [stack]                   # markdown status of a stack, for agents
 devctl diagnose <service>/<worktree>     # hand a service's recent logs to the debug agent
 devctl agents [stack] [--refresh] [--unassigned] [--json]   # claude/codex/opencode/pi sessions per stack
+devctl agent register <stack>              # link your own session to a stack (detected from the env)
 devctl agent assign <stack> <agent> <id>  # link a session to a stack (a link wins over a suggestion)
 devctl agent unassign <agent> <id>
 devctl agent note <agent> <id> <text>
