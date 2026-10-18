@@ -19,6 +19,7 @@ import { tailFile } from './logtail'
 import { execFile } from 'child_process'
 import { debugFailure, runDiagnosis } from './debugAgent'
 import { adapterFor, refreshSessions, repoForCwd, sessionKey, suggestStack, type TAgentSession } from './agents'
+import { inferSession, resolveCurrentSession } from './agents/current'
 import fs from 'fs'
 import path from 'path'
 import readline from 'node:readline/promises'
@@ -377,6 +378,7 @@ async function cmdUp(a: TArgs): Promise<void> {
     assertStackDeps(stackDef.services)
     state.stackDefs[target] = stackDef
     saveState(state)
+    autoRegisterCurrentSession(state, stackDef.name)
     targets = servicesToTargets(stackDef)
     out(`stack ${target}: ${stackSummary(stackDef)}`)
   } else if (target) {
@@ -888,6 +890,18 @@ function cmdLogs(a: TArgs): void {
   })
 }
 
+function autoRegisterCurrentSession(state: TDevctlState, stack: string): void {
+  try {
+    const current = resolveCurrentSession({ sessions: Object.values(state.agents ?? {}) })
+    if (!current) return
+    const key = `${current.agent}:${current.id}`
+    const links = state.links ?? {}
+    if (links[key]) return
+    state.links = { ...links, [key]: stack }
+    saveState(state)
+  } catch {}
+}
+
 interface TSessionRow {
   session: TAgentSession
   key: string
@@ -972,9 +986,30 @@ function cmdAgents(a: TArgs): void {
 
 function cmdAgent(args: string[]): void {
   const sub = args[0]
-  const usage = 'usage: devctl agent assign <stack> <agent> <id> | unassign <agent> <id> | note <agent> <id> <text> | resume <stack> [--agent X] [--id Y]'
+  const usage = 'usage: devctl agent register <stack> [--agent X] [--id Y] | assign <stack> <agent> <id> | unassign <agent> <id> | note <agent> <id> <text> | resume <stack> [--agent X] [--id Y]'
   const state = loadState()
 
+  if (sub === 'register') {
+    const a = parseArgs(args.slice(1), { string: ['agent', 'id'], boolean: ['json'] }, 'agent register')
+    const stack = a.positionals[0]
+    if (!stack) throw new UsageError(usage)
+    refreshSessions(state)
+    const known = Object.values(state.agents ?? {})
+    const explicitAgent = opt(a, 'agent')
+    const explicitId = opt(a, 'id')
+    const hinted = explicitAgent ? inferSession(explicitAgent, process.cwd(), known) : null
+    const current = resolveCurrentSession({ sessions: known })
+    const agent = explicitAgent ?? current?.agent ?? hinted?.agent
+    const id = explicitId ?? current?.id ?? hinted?.id
+    if (!agent || !id) {
+      throw new Error('could not detect your session - pass --agent <claude|codex|opencode|pi> and --id <id>')
+    }
+    state.links = { ...(state.links ?? {}), [`${agent}:${id}`]: stack }
+    saveState(state)
+    out(`linked ${agent}:${id} -> ${stack}`)
+    emitMutationResult(flag(a, 'json'), { ok: true, agent, id, stack })
+    return
+  }
   if (sub === 'assign') {
     const [stack, agent, id] = args.slice(1)
     if (!stack || !agent || !id) throw new UsageError(usage)
@@ -1661,13 +1696,15 @@ const HELP: Record<string, string> = {
   linked to. --refresh rescans the stores first; --unassigned shows the ones with no link.
   A link always wins over a suggestion. Sessions you run from the repo root are listed, not
   guessed, so link them with "devctl agent assign".`,
-  agent: `usage: devctl agent assign <stack> <agent> <id>
+  agent: `usage: devctl agent register <stack> [--agent X] [--id Y]
+              devctl agent assign <stack> <agent> <id>
               devctl agent unassign <agent> <id>
               devctl agent note <agent> <id> <text>
               devctl agent resume <stack> [--agent X] [--id Y]
 
-  assign links a session to a stack; unassign removes the link; note annotates it; resume runs
-  the agent's own resume command in the session's directory.`,
+  register links your own session to a stack (it detects the agent and session id from the
+  environment, or infers the newest session for the agent); assign links an explicit one;
+  unassign removes the link; note annotates it; resume runs the agent's resume command.`,
   doctor: `usage: devctl doctor [--json]`,
   config: `usage: devctl config show [--json] | config get <path> | config set <path> <value>
 
