@@ -169,7 +169,15 @@ export function StackActivity({ name, action }: Props) {
                   </ActionPanel.Section>
                   <ActionPanel.Section title="Export">
                   {service.url && (
-                    <ActionPanel.Item title="Copy URL" icon={Icon.CopyClipboard} shortcut={{ modifiers: ['cmd'], key: 'c' }} onAction={() => service.url && Clipboard.copy(service.url)} />
+                    <ActionPanel.Item title="Copy URL" icon={Icon.CopyClipboard} shortcut={{ modifiers: ['cmd'], key: 'c' }} onAction={async () => {
+                    if (!service.url) return
+                    try {
+                      await Clipboard.copy(service.url)
+                      await showHUD('URL copied')
+                    } catch (cause) {
+                      await toastSafely({ style: Toast.Style.Failure, title: 'Unable to copy URL', message: cause instanceof Error ? cause.message : String(cause) })
+                    }
+                  }} />
                   )}
                   {service.local && (
                     <ActionPanel.Item

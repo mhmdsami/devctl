@@ -1,5 +1,6 @@
 import { ActionPanel, Icon, List } from '@raycast/api'
 import { withToast } from './lib/actions'
+import { ErrorBoundary } from './lib/ErrorBoundary'
 import { useDevctlStatus } from './lib/useDevctlStatus'
 
 const environments = ['test', 'prod'] as const
@@ -7,6 +8,14 @@ const activeIcon = { source: Icon.CircleFilled, tintColor: '#34c759' }
 const inactiveIcon = { source: Icon.Circle, tintColor: '#8e8e93' }
 
 export default function SwitchEnv() {
+  return (
+    <ErrorBoundary>
+      <SwitchEnvView />
+    </ErrorBoundary>
+  )
+}
+
+function SwitchEnvView() {
   const { status, error, isLoading, reload } = useDevctlStatus()
 
   return (

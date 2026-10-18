@@ -1,5 +1,10 @@
+import { ErrorBoundary } from './lib/ErrorBoundary'
 import { StackForm } from './stack-form'
 
 export default function CreateStack() {
-  return <StackForm />
+  return (
+    <ErrorBoundary>
+      <StackForm />
+    </ErrorBoundary>
+  )
 }

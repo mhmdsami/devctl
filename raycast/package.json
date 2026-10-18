@@ -53,6 +53,12 @@
       "title": "Switch Environment",
       "description": "Switch external services between test and prod",
       "mode": "view"
+    },
+    {
+      "name": "agents",
+      "title": "Agent Sessions",
+      "description": "Claude, codex, opencode, and pi sessions, grouped by stack",
+      "mode": "view"
     }
   ],
   "dependencies": {

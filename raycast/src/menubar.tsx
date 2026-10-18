@@ -4,6 +4,7 @@ import { useDevctlStatus } from './lib/useDevctlStatus'
 import { useStacks } from './lib/useStacks'
 import { usePortless } from './lib/usePortless'
 import { toastSafely, updateToast, withToast } from './lib/actions'
+import { ErrorBoundary } from './lib/ErrorBoundary'
 import { serviceStateLabel, stackView, type ServiceState } from './lib/stackView'
 
 const stateIcon = (state: ServiceState | 'external') => {
@@ -15,6 +16,14 @@ const stateIcon = (state: ServiceState | 'external') => {
 }
 
 export default function Menubar() {
+  return (
+    <ErrorBoundary fallback={<MenuBarExtra icon={Icon.ExclamationMark} title="devctl error" />}>
+      <MenubarView />
+    </ErrorBoundary>
+  )
+}
+
+function MenubarView() {
   const { status, error: statusError, isLoading, reload: reloadStatus } = useDevctlStatus(5_000)
   const { stacks, error: stacksError, reload: reloadStacks } = useStacks(15_000)
   const { portless, error: portlessError } = usePortless(15_000)
@@ -56,7 +65,20 @@ export default function Menubar() {
                 title={`${service.repo}/${service.target} · ${serviceStateLabel(service.state)}`}
               >
                 {service.url && <MenuBarExtra.Item icon={Icon.Globe} title="Open URL" onAction={() => open(service.url!)} />}
-                {service.url && <MenuBarExtra.Item icon={Icon.CopyClipboard} title="Copy URL" onAction={() => Clipboard.copy(service.url!)} />}
+                {service.url && (
+                  <MenuBarExtra.Item
+                    icon={Icon.CopyClipboard}
+                    title="Copy URL"
+                    onAction={async () => {
+                      try {
+                        await Clipboard.copy(service.url!)
+                        await toastSafely({ style: Toast.Style.Success, title: 'URL copied' })
+                      } catch (cause) {
+                        await toastSafely({ style: Toast.Style.Failure, title: 'Unable to copy URL', message: cause instanceof Error ? cause.message : String(cause) })
+                      }
+                    }}
+                  />
+                )}
                 {service.local && (
                   <MenuBarExtra.Item
                     icon={Icon.Document}
@@ -143,15 +165,15 @@ export default function Menubar() {
       </MenuBarExtra.Section>
       <MenuBarExtra.Section title="Network">
         <MenuBarExtra.Submenu
-          icon={portless?.enabled && portless.proxyUp ? { source: Icon.Globe, tintColor: '#34c759' } : Icon.Globe}
-          title={`Portless: ${portless ? (portless.enabled ? (portless.proxyUp ? 'on' : 'on, proxy down') : 'off') : portlessError ? 'error' : 'Loading…'}`}
+          icon={portless?.usable && portless.proxyUp ? { source: Icon.Globe, tintColor: '#34c759' } : Icon.Globe}
+          title={`Portless: ${portless ? (portless.usable ? (portless.proxyUp ? 'ok' : 'proxy down') : 'missing') : portlessError ? 'error' : 'Loading…'}`}
         >
           {portlessError && <MenuBarExtra.Item icon={Icon.ExclamationMark} title={portlessError} />}
           {!portlessError && portless && !portless.usable && (
-            <MenuBarExtra.Item icon={Icon.Circle} title="Not installed - using localhost ports" />
+            <MenuBarExtra.Item icon={Icon.Circle} title="Not installed - devctl needs it (Node 24+)" />
           )}
           {!portlessError && portless?.usable && (
-            <MenuBarExtra.Item icon={Icon.CircleFilled} title={`Named URLs: ${portless.enabled ? 'On' : 'Off'}`} />
+            <MenuBarExtra.Item icon={Icon.CircleFilled} title="Routing: named URLs" />
           )}
           {!portlessError && portless?.usable && (
             <MenuBarExtra.Item
@@ -165,7 +187,12 @@ export default function Menubar() {
           {!portlessError &&
             portless?.usable &&
             portless.routes.map((route) => (
-              <MenuBarExtra.Item key={route} icon={Icon.Globe} title={route} onAction={() => open(`https://${route}`)} />
+              <MenuBarExtra.Item
+                key={route}
+                icon={Icon.Globe}
+                title={route}
+                onAction={() => open(portless && portless.port !== 443 ? `https://${route}:${portless.port}` : `https://${route}`)}
+              />
             ))}
         </MenuBarExtra.Submenu>
       </MenuBarExtra.Section>

@@ -1,6 +1,8 @@
-import { ActionPanel, Clipboard, confirmAlert, Icon, List, showHUD, useNavigation } from '@raycast/api'
-import { run, statusJson } from './lib/devctl'
-import { withToast } from './lib/actions'
+import { ActionPanel, Clipboard, confirmAlert, Icon, List, showHUD, Toast, useNavigation } from '@raycast/api'
+import { useEffect, useState } from 'react'
+import { devctlVersion, run, statusJson } from './lib/devctl'
+import { toastSafely, withToast } from './lib/actions'
+import { ErrorBoundary } from './lib/ErrorBoundary'
 import { useDevctlStatus } from './lib/useDevctlStatus'
 import { useStacks } from './lib/useStacks'
 import { stackView, type StackView } from './lib/stackView'
@@ -21,16 +23,28 @@ function ageLabel(iso: string | undefined): string | undefined {
 }
 
 export default function Manage() {
+  return (
+    <ErrorBoundary>
+      <ManageView />
+    </ErrorBoundary>
+  )
+}
+
+function ManageView() {
   const { stacks, error: stacksError, isLoading, reload: reloadStacks } = useStacks()
   const { status, error: statusError, reload: reloadStatus } = useDevctlStatus()
   const { push } = useNavigation()
+  const [version, setVersion] = useState<string | null>(null)
+  useEffect(() => {
+    devctlVersion().then(setVersion).catch(() => {})
+  }, [])
   const reload = () => {
     reloadStacks()
     reloadStatus()
   }
 
   if (stacksError) {
-    return <List><List.EmptyView icon={Icon.ExclamationMark} title="Unable to load stacks" description={stacksError} /></List>
+    return <List><List.EmptyView icon={Icon.ExclamationMark} title="Unable to load stacks" description={`${stacksError}${version ? ` (devctl ${version})` : ''}`} /></List>
   }
 
   const views = (stacks?.stacks ?? []).map((stack) => ({ stack, view: stackView(stack, status) }))
@@ -106,16 +120,24 @@ export default function Manage() {
                       icon={Icon.CopyClipboard}
                       shortcut={{ modifiers: ['cmd'], key: 'c' }}
                       onAction={async () => {
-                        await Clipboard.copy(await run(['context', stack.name]))
-                        await showHUD('Agent context copied')
+                        try {
+                          await Clipboard.copy(await run(['context', stack.name]))
+                          await showHUD('Agent context copied')
+                        } catch (cause) {
+                          await toastSafely({ style: Toast.Style.Failure, title: 'Unable to copy agent context', message: cause instanceof Error ? cause.message : String(cause) })
+                        }
                       }}
                     />
                     <ActionPanel.Item
                       title="Copy Status JSON"
                       icon={Icon.CopyClipboard}
                       onAction={async () => {
-                        await Clipboard.copy(JSON.stringify(await statusJson(), null, 2))
-                        await showHUD('Status JSON copied')
+                        try {
+                          await Clipboard.copy(JSON.stringify(await statusJson(), null, 2))
+                          await showHUD('Status JSON copied')
+                        } catch (cause) {
+                          await toastSafely({ style: Toast.Style.Failure, title: 'Unable to copy status', message: cause instanceof Error ? cause.message : String(cause) })
+                        }
                       }}
                     />
                   </ActionPanel.Section>

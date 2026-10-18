@@ -11,6 +11,14 @@ export interface ServiceView {
   local: boolean
 }
 
+const STARTING_GRACE_MS = 5 * 60_000
+
+function startingStuck(startedAt: string | undefined): boolean {
+  if (!startedAt) return false
+  const ms = Date.now() - new Date(startedAt).getTime()
+  return Number.isFinite(ms) && ms > STARTING_GRACE_MS
+}
+
 export interface StackView {
   id: string
   title: string
@@ -45,7 +53,7 @@ export function stackView(stack: TStackInfo, status: TStackStatus | null): Stack
       (member) => member.repo === repo && matchesTarget(member, target),
     )
     if (!runtime) return { repo, target, key: `${repo}/${target}`, state: 'stopped', url: null, local: true }
-    const state = runtime.alive && runtime.listening ? 'ready' : runtime.alive ? 'starting' : 'failed'
+    const state = runtime.alive && runtime.listening ? 'ready' : runtime.alive ? (startingStuck(runtime.startedAt) ? 'failed' : 'starting') : 'failed'
     return { repo, target, key: runtime.key, state, url: runtime.portlessUrl ?? runtime.url, local: true }
   })
 

@@ -73,8 +73,8 @@ export function StackForm({
       }
       const label = values.label?.trim() ?? ''
       if (label || editing) args.push('--label', label)
-      void withToast(editing ? `Updating ${name}` : `Creating ${name}`, args)
-      pop()
+      const ok = await withToast(editing ? `Updating ${name}` : `Creating ${name}`, args)
+      if (ok) pop()
     } finally {
       setBusy(false)
     }

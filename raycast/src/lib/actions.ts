@@ -19,22 +19,34 @@ export async function toastSafely(options: Toast.Options): Promise<void> {
   } catch {}
 }
 
-export async function withToast(title: string, args: string[], reload?: () => void): Promise<void> {
+const inFlight = new Set<string>()
+
+export async function withToast(title: string, args: string[], reload?: () => void): Promise<boolean> {
+  const key = args.join(' ')
+  if (inFlight.has(key)) {
+    await toastSafely({ style: Toast.Style.Failure, title: 'Already running', message: key })
+    return false
+  }
+  inFlight.add(key)
   let toast: Toast
   try {
     toast = await showToast({ style: Toast.Style.Animated, title })
   } catch {
-    return
+    inFlight.delete(key)
+    return false
   }
   try {
     const output = await runLongCommand(args)
     updateToast(toast, { style: Toast.Style.Success, message: lastOutputLine(output) })
+    return true
   } catch (error) {
     updateToast(toast, {
       style: Toast.Style.Failure,
       message: error instanceof Error ? error.message.split('\n')[0] : String(error),
     })
+    return false
   } finally {
+    inFlight.delete(key)
     try {
       reload?.()
     } catch {}

@@ -18,13 +18,13 @@ export interface TWorktreeInfo {
   branch: string | null
   path: string
   index: number
-  port: number
+  port: number | null
   inspectPort: number | null
 }
 
 export interface TStackRunningMember {
   key: string
-  port: number
+  port: number | null
   url: string
   portlessName?: string
   ref?: { logFile?: string }
@@ -119,7 +119,10 @@ export function binaryPath(): string {
     const expanded = expandHome(configured)
     if (isExecutable(expanded)) return expanded
   }
-  return resolveBinary() ?? (configured ? expandHome(configured) : BINARY_NAME)
+  const resolved = resolveBinary()
+  if (resolved) return resolved
+  if (configured && !configured.includes('/')) return configured
+  throw new Error('devctl not found. Install it, or set the "devctl Path" preference to the devctl executable.')
 }
 
 export function commandEnvironment(): NodeJS.ProcessEnv {
@@ -160,19 +163,56 @@ export function runLongCommand(args: string[]): Promise<string> {
 }
 
 export async function statusJson(): Promise<TStackStatus> {
-  return JSON.parse(await run(['status', '--json']))
+  const parsed = JSON.parse(await run(['status', '--json'])) as Partial<TStackStatus>
+  return { env: parsed.env ?? 'test', targets: parsed.targets ?? {}, stacks: Array.isArray(parsed.stacks) ? parsed.stacks : [] }
 }
 
 export async function stacksJson(): Promise<{ stacks: TStackInfo[] }> {
-  return JSON.parse(await run(['stack', 'ls', '--json']))
+  const parsed = JSON.parse(await run(['stack', 'ls', '--json'])) as Partial<{ stacks: TStackInfo[] }>
+  return { stacks: Array.isArray(parsed.stacks) ? parsed.stacks : [] }
 }
 
 export async function worktrees(): Promise<TWorktreeInfo[]> {
-  return JSON.parse(await run(['which', '--json']))
+  const parsed = JSON.parse(await run(['which', '--json'])) as unknown
+  return Array.isArray(parsed) ? (parsed as TWorktreeInfo[]) : []
 }
 
 export async function portlessStatusJson(): Promise<TPortlessStatus> {
-  return JSON.parse(await run(['portless', 'status', '--json']))
+  const parsed = JSON.parse(await run(['portless', 'status', '--json'])) as Partial<TPortlessStatus>
+  return {
+    installed: Boolean(parsed.installed),
+    usable: Boolean(parsed.usable),
+    bin: parsed.bin ?? null,
+    enabled: Boolean(parsed.enabled),
+    proxyUp: Boolean(parsed.proxyUp),
+    port: typeof parsed.port === 'number' ? parsed.port : 443,
+    routes: Array.isArray(parsed.routes) ? parsed.routes : [],
+  }
+}
+
+export async function devctlVersion(): Promise<string> {
+  return (await run(['--version'])).trim()
+}
+
+export interface TAgentSessionInfo {
+  agent: string
+  id: string
+  title: string
+  branch: string | null
+  cwd: string
+  repo: string | null
+  link: string | null
+  suggestion: string | null
+  note: string | null
+  updatedAt: string | null
+  state: string
+  resume: string[] | null
+}
+
+export async function agentSessions(stack?: string): Promise<TAgentSessionInfo[]> {
+  const args = ['agents', '--json', ...(stack ? [stack] : [])]
+  const parsed = JSON.parse(await run(args)) as Partial<{ sessions: TAgentSessionInfo[] }>
+  return Array.isArray(parsed.sessions) ? parsed.sessions : []
 }
 
 export function serviceLogs(target: string, lines = 100): Promise<string> {
@@ -180,7 +220,12 @@ export function serviceLogs(target: string, lines = 100): Promise<string> {
 }
 
 export function spawnDevctl(args: string[], onChunk?: (chunk: string) => void): { promise: Promise<number>; kill: () => void } {
-  const child = spawn(binaryPath(), args, { env: commandEnvironment() })
+  let child: ReturnType<typeof spawn>
+  try {
+    child = spawn(binaryPath(), args, { env: commandEnvironment() })
+  } catch (error) {
+    return { promise: Promise.reject(error), kill: () => {} }
+  }
   const handle = (chunk: Buffer): void => onChunk?.(chunk.toString())
   child.stdout?.on('data', handle)
   child.stderr?.on('data', handle)
@@ -188,7 +233,18 @@ export function spawnDevctl(args: string[], onChunk?: (chunk: string) => void): 
     child.on('error', reject)
     child.on('exit', (code: number | null) => resolve(code ?? 1))
   })
-  return { promise, kill: () => child.kill() }
+  const kill = (): void => {
+    try {
+      child.kill('SIGTERM')
+    } catch {}
+    const timer = setTimeout(() => {
+      try {
+        child.kill('SIGKILL')
+      } catch {}
+    }, 3_000)
+    timer.unref?.()
+  }
+  return { promise, kill }
 }
 
 function shellOut(cmd: string, args: string[]): Promise<void> {
@@ -215,7 +271,11 @@ export function openInEditor(path: string): Promise<void> {
   return shellOut('open', ['-a', app, path])
 }
 
+function appleScriptShellString(value: string): string {
+  const shellQuoted = `'${value.replaceAll("'", `'\\''`)}'`
+  return shellQuoted.replaceAll('\\', '\\\\').replaceAll('"', '\\"')
+}
+
 export async function followLogsInTerminal(logFile: string): Promise<void> {
-  const escaped = logFile.replaceAll('"', '\\"')
-  await shellOut('osascript', ['-e', `tell application "Terminal" to do script "tail -n 100 -f '${escaped}'"`])
+  await shellOut('osascript', ['-e', `tell application "Terminal" to do script "tail -n 100 -f ${appleScriptShellString(logFile)}"`])
 }
