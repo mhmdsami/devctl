@@ -5,7 +5,19 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 import { shQuote, tcpAlive } from './process'
 
-const PROXY_PORT_FILE = path.join(os.homedir(), '.portless', 'proxy.port')
+const DEFAULT_STATE_DIR = path.join(os.homedir(), '.portless')
+
+function stateDir(): string {
+  return process.env.PORTLESS_STATE_DIR ?? DEFAULT_STATE_DIR
+}
+
+function proxyPortFile(): string {
+  return path.join(stateDir(), 'proxy.port')
+}
+
+export function caFile(): string {
+  return path.join(stateDir(), 'ca.pem')
+}
 export const DEVCTL_PROXY_PORT = 1355
 
 let cachedBin: string | null | undefined
@@ -52,7 +64,7 @@ export function requirePortless(): string {
 
 export function proxyPort(): number {
   try {
-    const value = Number(fs.readFileSync(PROXY_PORT_FILE, 'utf8').trim())
+    const value = Number(fs.readFileSync(proxyPortFile(), 'utf8').trim())
     if (Number.isInteger(value) && value > 0) return value
   } catch {
   }

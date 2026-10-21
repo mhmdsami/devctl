@@ -3,7 +3,7 @@ import path from 'path'
 import { parseEnvFile, seedEnvFiles, writeEnvOverlay } from './envfile'
 import { interpolate, loadConfig, repoDir, type TDevctlConfig, type TServiceConfig } from './config'
 import { isShared, listWorktrees, type TRepoKey, type TWorktree } from './registry'
-import { dnsName as portlessDnsName, namedUrl } from './portless'
+import { caFile, dnsName as portlessDnsName, namedUrl } from './portless'
 import { readOverrides } from './envOverrides'
 import type { TDevctlState, TStackDef } from './state'
 
@@ -258,6 +258,14 @@ export function resolveEnv(
   for (const [key, value] of Object.entries(overrides)) {
     env[key] = value
     display[key] = { value, source: `override ${stackDef?.name}/${repo}.env` }
+  }
+
+  if (!svc.shared && env.NODE_EXTRA_CA_CERTS === undefined && base.NODE_EXTRA_CA_CERTS === undefined) {
+    const ca = caFile()
+    if (fs.existsSync(ca)) {
+      env.NODE_EXTRA_CA_CERTS = ca
+      display.NODE_EXTRA_CA_CERTS = { value: ca, source: 'portless CA' }
+    }
   }
 
   return { env, display }

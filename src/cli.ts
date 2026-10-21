@@ -332,7 +332,9 @@ function cleanupFailedEntry(state: TDevctlState, key: string, ref: TStackState['
   } catch {}
   const entry = state.stacks[key]
   if (!entry) return
-  if (entry.portlessName && !portlessRemoveAlias(entry.portlessName)) {
+  const svc = loadConfig().services[entry.repo]
+  const aliased = svc !== undefined && usesFixedPort(svc) && !svc.shared
+  if (aliased && entry.portlessName && !portlessRemoveAlias(entry.portlessName)) {
     out(colors.yellow(`~ ${entry.portlessName}: could not remove the portless route`))
   }
   delete state.stacks[key]
@@ -606,7 +608,8 @@ function stopRunningEntry(state: TDevctlState, key: string, force: boolean): voi
       stopRef({ ...stack.ref, port: servicePort(stack.port) }, stack.key, { keepPort: shared, force })
     }
   } finally {
-    if (!portlessRemoveAlias(stack.portlessName ?? `${stack.repo}-${stack.worktree}`)) {
+    const aliased = svc !== undefined && usesFixedPort(svc) && !shared
+    if (aliased && !portlessRemoveAlias(stack.portlessName ?? `${stack.repo}-${stack.worktree}`)) {
       out(colors.yellow(`~ ${stack.portlessName ?? stack.key}: could not remove the portless route`))
     }
     delete state.stacks[key]
