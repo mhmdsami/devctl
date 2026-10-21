@@ -20,6 +20,7 @@ export interface TServiceConfig {
   healthTimeoutMs: number
   healthCommand?: string
   shared?: boolean
+  sidecar?: boolean
   stopCommand?: string
   logsCommand?: string
   install?: string

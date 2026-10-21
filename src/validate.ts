@@ -82,6 +82,8 @@ function validateService(services: Record<string, unknown>, name: string, raw: u
     throw new ConfigError(`services.${name}.healthTimeoutMs`, 'expected positive number')
   }
   if (s.shared !== undefined && typeof s.shared !== 'boolean') throw new ConfigError(`services.${name}.shared`, 'expected boolean')
+  if (s.sidecar !== undefined && typeof s.sidecar !== 'boolean') throw new ConfigError(`services.${name}.sidecar`, 'expected boolean')
+  if (s.sidecar && s.shared) throw new ConfigError(`services.${name}.sidecar`, 'a service cannot be both shared and sidecar')
   if (s.install !== undefined && (typeof s.install !== 'string' || !s.install.trim())) {
     throw new ConfigError(`services.${name}.install`, 'expected non-empty string when set')
   }

@@ -9,10 +9,10 @@ import { validateConfig } from './validate'
 import { createWorktree, isShared, removeWorktree, repoKeys as repoKeysFromRegistry, entryKey, findWorktree, listAllWorktrees, listWorktrees, parseTarget, resolveCwdTarget, type TRepoKey } from './registry'
 import { seedEnvFiles } from './envfile'
 import { loadState, saveState, STATE_FILE, STATE_VERSION, DEVCTL_DIR, reportStoreWarnings, type TStackState, type TDevctlState } from './state'
-import { depsOf, dependentsOf, hasWiring, planStack, providersOf, resolveEnv, type TStackPlan } from './stacks'
+import { depsOf, dependentsOf, hasWiring, planStack, providersOf, resolveEnv, sidecarsOf, type TStackPlan } from './stacks'
 import { overrideFile, setOverride, unsetOverride } from './envOverrides'
 import { discoverStacks, resolveStack } from './stackRegistry'
-import { alias as portlessAlias, dnsName as portlessDnsName, ensureProxy, listRoutes, namedUrl, portlessAvailable, portlessBin, portlessProxyUp, portlessRunCommand, proxyPort, removeAlias as portlessRemoveAlias, requirePortless, routePort, startProxy, stopProxy } from './portless'
+import { alias as portlessAlias, dnsName as portlessDnsName, ensureProxy, listRoutes, namedUrl, portlessAvailable, portlessBin, portlessProxyUp, portlessRunCommand, portlessRunName, proxyPort, removeAlias as portlessRemoveAlias, requirePortless, routePort, startProxy, stopProxy } from './portless'
 import { sleep, sleepSync, colors, setQuiet, out, quiet, setColorEnabled } from './util'
 import { parseArgs, flag, opt, positional, type TArgs, UsageError } from './args'
 import { tailFile } from './logtail'
@@ -122,7 +122,7 @@ async function ensureStack(
   if (attempted.has(key0)) return
   attempted.add(key0)
 
-  for (const dep of depsOf(state, repo, stackDef)) {
+  for (const dep of depsOf(state, repo, stackDef, wt0.name)) {
     await ensureStack(dep.repo, dep.worktree ?? 'head', state, stackDef, attempted, force, summary)
   }
 
@@ -134,7 +134,7 @@ async function ensureStack(
   const portlessName = portlessDnsName(repo, wt)
   const plan = planStack(repo, wt, state, stackDef)
   const named = namedUrl(portlessName)
-  const startCmd = fixed ? plan.cmd : portlessRunCommand(plan.name, plan.cmd)
+  const startCmd = fixed ? plan.cmd : portlessRunCommand(portlessRunName(repo, wt, repoDir(repo)), plan.cmd)
   const startEnv = fixed ? plan.env : { ...plan.env, PORTLESS_PORT: String(proxyPort()) }
   const wiringFingerprint = hasWiring(repo) ? JSON.stringify({ port: plan.port, env: plan.env }) : undefined
 
@@ -304,7 +304,7 @@ async function waitFor(key: string, plan: TStackPlan, ref: TStackState['ref'], l
   if (!quiet()) process.stdout.write(`… ${key} starting${where} `)
   const deadline = Date.now() + plan.healthTimeoutMs
   while (Date.now() < deadline) {
-    if (await healthy(plan, port)) {
+    if (await healthy(plan, port ?? routePort(plan.name))) {
       out(colors.green(`ready ${namedUrl(plan.name)}`))
       return true
     }
@@ -351,7 +351,7 @@ function planTargets(
     const key = entryKey(wt)
     if (seen.has(key)) return
     seen.add(key)
-    for (const dep of depsOf(state, repo, stackDef)) visit(dep.repo, dep.worktree ?? 'head')
+    for (const dep of depsOf(state, repo, stackDef, wt.name)) visit(dep.repo, dep.worktree ?? 'head')
     const svc = loadConfig().services[repo]
     plan.push({ key, repo, target: wt.name, name: portlessDnsName(repo, wt), port: wt.port, shared: Boolean(svc?.shared), cmd: svc?.command ?? '' })
   }
@@ -421,7 +421,9 @@ async function cmdUp(a: TArgs): Promise<void> {
   }
 
   if (stackDef) {
-    const members = new Set(Object.entries(stackDef.services).map(([repo, wt]) => `${repo}/${wt}`))
+    const members = new Set(
+      Object.entries(stackDef.services).flatMap(([repo, wt]) => [repo, ...sidecarsOf(repo)].map((svc) => `${svc}/${wt}`)),
+    )
     for (const [key, entry] of Object.entries(state.stacks)) {
       if (entry.stack !== stackDef.name || members.has(key) || isShared(entry.repo)) continue
       out(colors.yellow(`~ ${key}: dropped from stack ${stackDef.name} - stopping`))
@@ -630,7 +632,7 @@ async function restartStack(key: string, state: TDevctlState, force: boolean): P
   const wt = findWorktree(stack.repo, stack.worktree)
   const plan = planStack(stack.repo as TRepoKey, wt, state, def)
   const named = namedUrl(plan.name)
-  const startCmd = fixed ? plan.cmd : portlessRunCommand(plan.name, plan.cmd)
+  const startCmd = fixed ? plan.cmd : portlessRunCommand(portlessRunName(stack.repo, wt, repoDir(stack.repo)), plan.cmd)
   const startEnv = fixed ? plan.env : { ...plan.env, PORTLESS_PORT: String(proxyPort()) }
   const newRef = start(key, plan.path, startEnv, startCmd, fixed ? servicePort(plan.port) : 0, undefined, { detached: isShared(stack.repo) })
   const newPort = fixed ? plan.port : await discoverPort(plan.name)
@@ -1471,7 +1473,7 @@ function assertStackDeps(services: Partial<Record<string, string>>): void {
   for (const [svc, target] of Object.entries(services)) {
     if (target === 'test' || target === 'prod') continue
     for (const provider of providersOf(svc)) {
-      if (isShared(provider)) continue
+      if (isShared(provider) || loadConfig().services[provider]?.sidecar) continue
       if (!services[provider]) {
         throw new UsageError(
           `${svc} depends on "${provider}" - add it to the stack (head, a worktree name, test, or prod) via stack add/create`,

@@ -62,6 +62,19 @@ function providersOfSvc(svc: TServiceConfig): string[] {
   return [...out]
 }
 
+export function sidecarsOf(repo: TRepoKey): string[] {
+  const out = new Set<string>()
+  const visit = (svc: string): void => {
+    for (const provider of providersOf(svc)) {
+      if (!serviceOf(provider).sidecar || out.has(provider)) continue
+      out.add(provider)
+      visit(provider)
+    }
+  }
+  visit(repo)
+  return [...out]
+}
+
 export function hasWiring(repo: TRepoKey): boolean {
   const svc = serviceOf(repo)
   return Boolean(svc.wiring && Object.keys(svc.wiring).length > 0)
@@ -77,7 +90,9 @@ export function targetFor(
   consumer: string,
   provider: string,
   stackDef?: TStackDef,
+  consumerWorktree = 'head',
 ): TTarget {
+  if (serviceOf(provider).sidecar) return { kind: 'local', name: consumerWorktree }
   const raw = stackDef?.services[provider] ?? state.targets[consumer] ?? state.env
   if (raw === 'test' || raw === 'prod') return { kind: 'remote', mode: raw }
   return { kind: 'local', name: normalizeTarget(provider, raw) }
@@ -113,13 +128,14 @@ export function resolveWiring(
   state: TModeState,
   consumer: string,
   stackDef?: TStackDef,
+  consumerWorktree?: string,
 ): Record<string, string | null> {
   const cfg = loadConfig()
   const svc = serviceOf(consumer)
   const values: Record<string, string | null> = {}
   for (const [envKey, ref] of Object.entries(svc.wiring ?? {})) {
     const [provider, value] = ref.split('.', 2) as [string, string]
-    const target = targetFor(state, consumer, provider, stackDef)
+    const target = targetFor(state, consumer, provider, stackDef, consumerWorktree)
     if (target.kind === 'remote') {
       values[envKey] = remoteValue(cfg, target.mode, provider, value)
       continue
@@ -137,6 +153,7 @@ export function depsOf(
   state: Pick<TDevctlState, 'env' | 'targets'>,
   repo: TRepoKey,
   stackDef?: TStackDef,
+  worktree?: string,
 ): TDep[] {
   const deps: TDep[] = []
   for (const provider of providersOf(repo)) {
@@ -144,7 +161,7 @@ export function depsOf(
       deps.push({ kind: 'service', repo: provider, worktree: null })
       continue
     }
-    const target = targetFor(state, repo, provider, stackDef)
+    const target = targetFor(state, repo, provider, stackDef, worktree)
     if (target.kind === 'local') deps.push({ kind: 'service', repo: provider, worktree: target.name })
   }
   return deps
@@ -215,14 +232,14 @@ export function resolveEnv(
 
   const wiring = svc.wiring ?? {}
   if (!svc.shared && Object.keys(wiring).length > 0) {
-    const values = resolveWiring(state, repo, stackDef)
+    const values = resolveWiring(state, repo, stackDef, wt.name)
     const overrides: Record<string, string> = {}
     for (const [key, value] of Object.entries(values)) {
       if (value !== null) overrides[key] = value
       display[key] = { value: value ?? '', source: `wiring ${wiring[key] ?? ''}` }
     }
     const merged = { ...base, ...overrides }
-    if (opts.write) writeEnvOverlay(wt.path, baseFile, overrides)
+    if (opts.write && fs.existsSync(basePath)) writeEnvOverlay(wt.path, baseFile, overrides)
     for (const [key, value] of Object.entries(merged)) {
       const current = display[key]
       if (!current || current.source.startsWith('base')) {

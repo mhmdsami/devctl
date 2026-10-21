@@ -85,7 +85,7 @@ export function listRoutes(): TRoute[] {
   const bin = portlessBin()
   if (bin) {
     try {
-      const out = execFileSync(bin, ['list'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5_000 })
+      const out = execFileSync(bin, ['list'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5_000 }).replace(/\x1b\[[0-9;]*m/g, '')
       for (const match of out.matchAll(/https?:\/\/(\S+)\s+->\s+localhost:(\d+)(?:\s+\(([^)]+)\))?/g)) {
         routes.push({ host: match[1], port: Number(match[2]), kind: match[3] ?? 'app' })
       }
@@ -155,6 +155,12 @@ function sanitizeLabel(input: string): string {
     .replace(/[^a-z0-9-]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 63)
+}
+
+/** portless prepends a linked worktree's branch itself, so it gets only the service part of the name. */
+export function portlessRunName(repo: string, wt: { name: string; branch: string | null; path: string }, root: string): string {
+  const prefixed = wt.path !== root && wt.branch !== null && wt.branch !== 'main' && wt.branch !== 'master'
+  return prefixed ? repo : dnsName(repo, wt)
 }
 
 export function dnsName(repo: string, wt: { name: string; branch: string | null }): string {

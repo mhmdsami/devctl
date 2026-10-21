@@ -39,6 +39,8 @@ const cfg = {
       healthTimeoutMs: 1000,
     },
     web: { repo: 'web', basePort: 3100, command: 'true', wiring: { API_URL: 'api.url', SELF_URL: 'api.selfUrl', SELF_ORIGIN: 'api.origin' }, healthTimeoutMs: 1000 },
+    cache: { repo: 'api', basePort: 6379, sidecar: true, command: 'true', provides: { url: 'redis://127.0.0.1:${port}' }, healthTimeoutMs: 1000 },
+    worker: { repo: 'api', basePort: 3200, command: 'true', wiring: { REDIS_URL: 'cache.url' }, dependsOn: ['cache'], healthTimeoutMs: 1000 },
   },
 }
 fs.writeFileSync(path.join(root, 'devctl.config.json'), JSON.stringify(cfg, null, 2))
@@ -61,6 +63,10 @@ assert.deepStrictEqual(depsOf(state, 'api'), [{ kind: 'service', repo: 'mongo', 
 assert.deepStrictEqual(depsOf(state, 'web'), [])
 const localWeb = { ...state, targets: { web: 'api/head' } }
 assert.deepStrictEqual(depsOf(localWeb, 'web'), [{ kind: 'service', repo: 'api', worktree: 'head' }])
+
+assert.deepStrictEqual(targetFor(state, 'worker', 'cache', undefined, 'ft-x'), { kind: 'local', name: 'ft-x' })
+assert.deepStrictEqual(depsOf({ env: 'prod', targets: {} }, 'worker', undefined, 'head'), [{ kind: 'service', repo: 'cache', worktree: 'head' }])
+assert.strictEqual(resolveWiring(state, 'worker', undefined, 'head').REDIS_URL, 'redis://127.0.0.1:6379')
 
 const dbWts = listWorktrees('mongo')
 assert.strictEqual(dbWts.length, 1)
