@@ -23,7 +23,7 @@ devctl down ft-my-feature  # stop them
 
 ## Install
 
-Needs Git, Node 20+, and pnpm (`corepack enable`).
+Needs Git, Node 24+, and pnpm (`corepack enable`).
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/mhmdsami/devctl/main/install.sh | sh
@@ -33,6 +33,8 @@ devctl doctor
 
 ## Docs
 
+- [Set up with an agent](docs/setup-with-an-agent.md): a runbook your agent can follow to discover
+  repos, pick services, and write the config.
 - [Concepts](docs/concepts.md): services, worktrees, stacks, ports, shared services, state.
 - [Configuration](docs/configuration.md): the config file, the graph, templates, environments.
 - [Named URLs](docs/portless.md): portless and the `devctl portless` commands.
