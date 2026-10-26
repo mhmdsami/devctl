@@ -496,27 +496,26 @@ async function cmdDown(a: TArgs): Promise<void> {
     const stackDef = resolveStack(target, state.stackDefs)
     out(`stack ${target}: down`)
     let left = 0
+    const pinnedKeys: string[] = []
     for (const repo of repoKeysFromRegistry()) {
       const service = stackDef.services[repo]
-      if (service && service !== 'test' && service !== 'prod') {
-        const wt = findWorktree(repo, service)
-        const key = entryKey(wt)
-        const claim = state.stacks[key]?.stack
-        if (claim && claim !== stackDef.name && state.stackDefs[claim]?.services?.[repo] === service) {
-          left++
-          out(colors.dim(`~ ${key} still claimed by stack ${claim} - leaving it running`))
-          continue
-        }
-        if (claim && claim !== stackDef.name) {
-          out(colors.dim(`~ ${key}: stale claim from stack ${claim} - taking it over`))
-        }
-        if (!state.stacks[key]) {
-          left++
-          continue
-        }
-        stopOne(key)
+      if (!service || service === 'test' || service === 'prod') continue
+      const wt = findWorktree(repo, service)
+      const key = entryKey(wt)
+      const claim = state.stacks[key]?.stack
+      if (claim && claim !== stackDef.name && state.stackDefs[claim]?.services?.[repo] === service) {
+        left++
+        out(colors.dim(`~ ${key} still claimed by stack ${claim} - leaving it running`))
+        continue
       }
+      if (claim && claim !== stackDef.name) {
+        out(colors.dim(`~ ${key}: stale claim from stack ${claim} - taking it over`))
+      }
+      pinnedKeys.push(key)
     }
+    for (const key of pinnedKeys) if (!state.stacks[key]) left++
+    const plan = stackDeletePlan(state.stacks, stackDef.name, pinnedKeys, isShared)
+    for (const key of plan.stop) stopOne(key)
     closeWorkspaceByLabel(target)
     saveState(state)
     out(colors.green(`stack ${target}: stopped ${stopped.length}, untouched ${left}`))
