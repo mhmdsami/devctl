@@ -11,7 +11,7 @@ import { seedEnvFiles } from './envfile'
 import { loadState, saveState, STATE_FILE, STATE_VERSION, DEVCTL_DIR, reportStoreWarnings, type TStackState, type TDevctlState } from './state'
 import { depsOf, dependentsOf, hasWiring, planStack, providersOf, resolveEnv, sidecarsOf, type TStackPlan } from './stacks'
 import { overrideFile, setOverride, unsetOverride } from './envOverrides'
-import { discoverStacks, resolveStack } from './stackRegistry'
+import { discoverStacks, resolveStack, stackDeletePlan } from './stackRegistry'
 import { alias as portlessAlias, dnsName as portlessDnsName, ensureProxy, listRoutes, namedUrl, portlessAvailable, portlessBin, portlessProxyUp, portlessRunCommand, portlessRunName, proxyPort, removeAlias as portlessRemoveAlias, requirePortless, routePort, startProxy, stopProxy } from './portless'
 import { sleep, sleepSync, colors, setQuiet, out, quiet, setColorEnabled } from './util'
 import { parseArgs, flag, opt, positional, type TArgs, UsageError } from './args'
@@ -1590,14 +1590,29 @@ async function cmdStack(rawArgs: string[]): Promise<void> {
       .map((repo) => ({ repo, service: def.services[repo] }))
       .filter((m): m is { repo: TRepoKey; service: string } => Boolean(m.service && m.service !== 'test' && m.service !== 'prod' && !isShared(m.repo)))
     const removable = members.filter((m) => m.service !== 'head')
+    const pinned = members.map((m) => `${m.repo}/${m.service}`)
+    const plan = stackDeletePlan(state.stacks, name, pinned, isShared)
+    const extra = plan.stop.filter((key) => !pinned.includes(key))
+    const extraNote = extra.length > 0 ? ` Also stops ${extra.join(', ')} (started by wiring).` : ''
+    const untagNote = plan.untag.length > 0 ? ` Shared ${plan.untag.join(', ')} keep running and lose the stack tag.` : ''
     await confirmAction(
       a,
       keepWorktrees
-        ? `delete stack "${name}" (${stackSummary(def)})? Running members will be stopped; worktrees untouched`
-        : `delete stack "${name}" (${stackSummary(def)})? Running members are stopped and their worktrees are removed: ${removable.map((m) => `${m.repo}/${m.service}`).join(', ') || '(none)'}. Branches are kept`,
+        ? `delete stack "${name}" (${stackSummary(def)})? Running members will be stopped; worktrees untouched.${extraNote}${untagNote}`
+        : `delete stack "${name}" (${stackSummary(def)})? Running members are stopped and their worktrees are removed: ${removable.map((m) => `${m.repo}/${m.service}`).join(', ') || '(none)'}. Branches are kept.${extraNote}${untagNote}`,
     )
-    for (const m of members) {
-      if (state.stacks[`${m.repo}/${m.service}`]) stopRunningEntry(state, `${m.repo}/${m.service}`, force)
+    for (const key of plan.stop) {
+      if (!state.stacks[key]) continue
+      try {
+        stopRunningEntry(state, key, force)
+      } catch (err) {
+        console.error(colors.red(`devctl: could not stop ${key}: ${err instanceof Error ? err.message : String(err)}`))
+        process.exitCode = 1
+      }
+    }
+    for (const key of plan.untag) {
+      const entry = state.stacks[key]
+      if (entry) state.stacks[key] = { ...entry, stack: undefined }
     }
     closeWorkspaceByLabel(name)
     delete state.stackDefs[name]

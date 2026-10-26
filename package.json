@@ -15,7 +15,7 @@
   "scripts": {
     "devctl": "./bin/devctl",
     "doctor": "./bin/devctl doctor",
-    "test": "DEVCTL_DIR=\"${TMPDIR:-/tmp}/devctl-test-state\" DEVCTL_WORKTREES_ROOT=\"${TMPDIR:-/tmp}/devctl-test-worktrees\" tsx src/graph.test.ts && tsx src/store.test.ts && tsx src/agents/current.test.ts && tsx src/usage.test.ts",
+    "test": "DEVCTL_DIR=\"${TMPDIR:-/tmp}/devctl-test-state\" DEVCTL_WORKTREES_ROOT=\"${TMPDIR:-/tmp}/devctl-test-worktrees\" tsx src/graph.test.ts && tsx src/store.test.ts && tsx src/agents/current.test.ts && tsx src/usage.test.ts && tsx src/stackDelete.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {

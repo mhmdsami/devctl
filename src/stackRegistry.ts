@@ -32,3 +32,25 @@ export function resolveStack(name: string, stackDefs: Record<string, TStackDef>)
     `No stack "${name}". Run \`devctl stack ls\` - stacks are branch names shared across repos, or pin members with \`devctl stack add\`.`,
   )
 }
+
+export interface TStackDeletePlan {
+  stop: string[]
+  untag: string[]
+}
+
+export function stackDeletePlan(
+  stacks: Record<string, { repo: string; stack?: string }>,
+  name: string,
+  pinnedKeys: string[],
+  isSharedRepo: (repo: string) => boolean,
+): TStackDeletePlan {
+  const stop = new Set<string>()
+  for (const key of pinnedKeys) if (stacks[key]) stop.add(key)
+  const untag: string[] = []
+  for (const [key, entry] of Object.entries(stacks)) {
+    if (entry.stack !== name) continue
+    if (isSharedRepo(entry.repo)) untag.push(key)
+    else stop.add(key)
+  }
+  return { stop: [...stop], untag }
+}
