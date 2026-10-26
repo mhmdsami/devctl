@@ -56,11 +56,12 @@ function servicePort(value: number | null): number {
   return value ?? 0
 }
 
-async function stackStatus(stack: TStackState): Promise<{ alive: boolean; listening: boolean; portlessUrl: string | null }> {
+async function stackStatus(stack: TStackState): Promise<{ alive: boolean; listening: boolean; detached: boolean; portlessUrl: string | null }> {
   const listening = stack.port != null ? await tcpAlive(stack.port) : false
   const alive = isShared(stack.repo) ? listening : await tabAlive(stack)
+  const detached = listening && !stack.ref.pid && !stack.ref.paneId
   const portlessLink = stack.portlessName && !isShared(stack.repo) && portlessAvailable() ? namedUrl(stack.portlessName) : null
-  return { alive, listening, portlessUrl: portlessLink }
+  return { alive, listening, detached, portlessUrl: portlessLink }
 }
 
 async function discoverPort(name: string, timeoutMs = 15_000): Promise<number | null> {
@@ -138,7 +139,8 @@ async function ensureStack(
   const startEnv = fixed ? plan.env : { ...plan.env, PORTLESS_PORT: String(proxyPort()) }
   const wiringFingerprint = hasWiring(repo) ? JSON.stringify({ port: plan.port, env: plan.env }) : undefined
 
-  const existingRef = findRefByLabel(trackedTabWorkspace(state, key), key)
+  const knownPort = fixed ? plan.port : routePort(plan.name)
+  const existingRef = findRefByLabel(trackedTabWorkspace(state, key), key, knownPort ?? undefined, plan.path)
   const tracked = state.stacks[key]
 
   const recordStack = (ref: TStackState['ref'], port: number | null, startedAt?: string) => {
@@ -592,6 +594,16 @@ function stopRunningEntry(state: TDevctlState, key: string, force: boolean): voi
   }
   const svc = loadConfig().services[stack.repo]
   const shared = isShared(stack.repo)
+  if (!stack.ref.pid && stack.port !== null) {
+    try {
+      const path = findWorktree(stack.repo, stack.worktree).path
+      const owner = pidsListeningOnPort(stack.port).find((pid) => pidCwd(pid) === path)
+      if (owner) {
+        stack.ref.pid = owner
+        stack.ref.startToken = processStartToken(owner) ?? undefined
+      }
+    } catch {}
+  }
   try {
     if (svc?.stopCommand) {
       stopRef({ ...stack.ref, port: servicePort(stack.port) }, stack.key, { keepPort: true, force })
@@ -829,7 +841,7 @@ async function cmdStatus(a: TArgs): Promise<void> {
         2,
       ),
     )
-    if (check && rows.some((row) => !row.alive || !row.listening)) process.exitCode = 1
+    if (check && rows.some((row) => !row.detached && (!row.alive || !row.listening))) process.exitCode = 1
     return
   }
 
@@ -838,10 +850,16 @@ async function cmdStatus(a: TArgs): Promise<void> {
     return
   }
   for (const r of rows) {
-    const status = r.alive && r.listening ? colors.green('● ready') : r.alive ? colors.yellow('● starting') : colors.red('○ dead')
+    const status = r.detached
+      ? colors.yellow('● detached')
+      : r.alive && r.listening
+        ? colors.green('● ready')
+        : r.alive
+          ? colors.yellow('● starting')
+          : colors.red('○ dead')
     console.log(`${status} ${r.key.padEnd(50)} ${r.stackLabel ?? r.stack ?? ''} ${r.portlessUrl ?? r.url}`)
   }
-  if (check && rows.some((row) => !row.alive || !row.listening)) process.exitCode = 1
+  if (check && rows.some((row) => !row.detached && (!row.alive || !row.listening))) process.exitCode = 1
 }
 
 function cmdWhich(a: TArgs): void {

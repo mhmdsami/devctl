@@ -1,7 +1,7 @@
 import { execFileSync, spawn } from 'child_process'
 import fs from 'fs'
 import { loadConfig } from './config'
-import { envExports, killTree, ownedPidsOnPort, pidsListeningOnPort, processMatches, processStartToken, shQuote } from './process'
+import { envExports, killTree, ownedPidsOnPort, pidCwd, pidsListeningOnPort, processMatches, processStartToken, shQuote } from './process'
 import { sleepSync } from './util'
 import { tailFile } from './logtail'
 
@@ -332,7 +332,7 @@ export function requireRunner(): void {
   }
 }
 
-export function findRefByLabel(workspaceId: string | undefined, label: string): TProcRef | null {
+export function findRefByLabel(workspaceId: string | undefined, label: string, port?: number, cwd?: string): TProcRef | null {
   if (!herdrEnabled() || !workspaceId) return null
   const tabs = listTabs(workspaceId).filter((t) => t.label === label)
   if (tabs.length === 0) return null
@@ -342,5 +342,15 @@ export function findRefByLabel(workspaceId: string | undefined, label: string): 
       raw(['tab', 'close', extra.tab_id])
     } catch {}
   }
-  return { workspaceId, tabId, paneId: paneIdForTab(tabId) ?? '', port: 0 }
+  let pid: number | undefined
+  let startToken: string | undefined
+  if (port) {
+    const listeners = pidsListeningOnPort(port)
+    const owner = cwd ? listeners.find((candidate) => pidCwd(candidate) === cwd) : listeners[0]
+    if (owner) {
+      pid = owner
+      startToken = processStartToken(owner) ?? undefined
+    }
+  }
+  return { workspaceId, tabId, paneId: paneIdForTab(tabId) ?? undefined, pid, startToken, port: port ?? 0 }
 }
