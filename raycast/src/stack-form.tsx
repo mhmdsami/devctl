@@ -19,7 +19,7 @@ export function StackForm({
   const [members, setMembers] = useState<Record<string, string | undefined>>({})
   const [busy, setBusy] = useState(false)
 
-  const services = [...new Set([...trees.map((t) => t.repo), ...Object.keys(initial?.services ?? {})])]
+  const services = [...new Set([...trees.filter((t) => !t.sidecar).map((t) => t.repo), ...Object.keys(initial?.services ?? {})])]
   const worktreeItems = (repo: string): Choice[] =>
     trees
       .filter((t) => t.repo === repo && t.name !== 'head')

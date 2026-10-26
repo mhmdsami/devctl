@@ -20,6 +20,7 @@ export interface TWorktreeInfo {
   index: number
   port: number | null
   inspectPort: number | null
+  sidecar?: boolean
 }
 
 export interface TStackRunningMember {

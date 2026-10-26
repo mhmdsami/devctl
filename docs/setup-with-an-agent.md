@@ -81,7 +81,8 @@ Only read env key names. Never copy secret values into the config.
   caches. Set `shared: true` and a `basePort`.
 - **Sidecar**: runs per worktree but is not a stack member and follows the worktree of the service
   that depends on it. Use for a per-feature Redis, worker, or sidecar process that should not be
-  pinned in every stack. Set `sidecar: true`.
+  pinned in every stack. Set `sidecar: true`. Do not select it in `stack create` or `stack add`;
+  the CLI rejects it.
 - **External**: a deployed service reached in `test` or `prod`. Model it with `envExternals` and
   `remoteProvides`, not a local command.
 

@@ -22,6 +22,8 @@ Optional:
 - `provides`, `wiring`, `dependsOn`, `remoteProvides`: the dependency graph.
 - `env`, `envExternals`, `overlayManagedKeys`: environment values.
 - `shared`: one instance for every stack, with a fixed port.
+- `sidecar`: runs per worktree but is not a stack member. It follows the worktree of the service that
+  depends on it, is never pinned in a stack, and cannot be `shared`.
 - `inspectBasePort`: enables `${inspectPort}` for Node inspector flags.
 
 Top-level fields:

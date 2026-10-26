@@ -862,7 +862,8 @@ async function cmdStatus(a: TArgs): Promise<void> {
 }
 
 function cmdWhich(a: TArgs): void {
-  const all = listAllWorktrees()
+  const services = loadConfig().services
+  const all = listAllWorktrees().map((wt) => ({ ...wt, sidecar: Boolean(services[wt.repo]?.sidecar) }))
   if (flag(a, 'json')) {
     console.log(JSON.stringify(all, null, 2))
     return
@@ -1546,6 +1547,9 @@ async function cmdStack(rawArgs: string[]): Promise<void> {
     if (!name || !repo || !wt || a.positionals.length !== 3) throw new UsageError('usage: devctl stack add <name> <repo> <worktree|branch|test|prod|none>')
     if (!repoKeysFromRegistry().includes(repo)) throw new UsageError(`unknown repo "${repo}"`)
     if (isShared(repo)) throw new UsageError(`"${repo}" is a shared service - it joins stacks automatically via dependsOn, not as a member`)
+    if (wt !== 'none' && loadConfig().services[repo]?.sidecar) {
+      throw new UsageError(`"${repo}" is a sidecar - it joins the stack automatically with the service that depends on it, so it cannot be pinned`)
+    }
     if (wt !== 'none' && wt !== 'test' && wt !== 'prod') {
       findWorktree(repo as TRepoKey, wt)
     }
@@ -1569,8 +1573,11 @@ async function cmdStack(rawArgs: string[]): Promise<void> {
     for (const svc of serviceNames) {
       const value = opt(a, svc)
       if (value === undefined) continue
-      if (isShared(svc)) throw new UsageError(`"${svc}" is a shared service - it joins stacks automatically via dependsOn, not as a member`)
       if (value === 'none') continue
+      if (isShared(svc)) throw new UsageError(`"${svc}" is a shared service - it joins stacks automatically via dependsOn, not as a member`)
+      if (loadConfig().services[svc]?.sidecar) {
+        throw new UsageError(`"${svc}" is a sidecar - it joins the stack automatically with the service that depends on it, so it cannot be pinned`)
+      }
       if (value !== 'test' && value !== 'prod') {
         services[svc] = createWorktree(svc, value).name
       } else {
