@@ -40,3 +40,5 @@ worktrees, wired together by a dependency graph declared in `devctl.config.json`
   sentence case, concrete statements.
 - After changing behavior: `npm run typecheck`, `npm test`, and exercise the CLI once
   (`devctl status --check` is the cheap smoke).
+- Commit messages are a single line in Conventional Commits form, for example
+  `fix(stack): stop sidecars on down`. No body and no trailers.
