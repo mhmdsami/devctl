@@ -85,6 +85,14 @@ function logFileFor(key: string): string {
   return `${dir}/${key.replace(/\//g, '__')}.log`
 }
 
+function paneScript(key: string, body: string): string {
+  const dir = `${process.env.HOME}/.devctl/scripts`
+  fs.mkdirSync(dir, { recursive: true })
+  const file = `${dir}/${key.replace(/\//g, '__')}.sh`
+  fs.writeFileSync(file, `${body}\n`)
+  return file
+}
+
 export function start(
   key: string,
   cwd: string,
@@ -103,7 +111,8 @@ export function start(
     for (const [k, v] of Object.entries(env)) args.push('--env', `${k}=${v}`)
     const res = h(args).result as { tab: { tab_id: string }; root_pane: { pane_id: string } }
     const exitMarker = `__DEVCTL_EXITED_${Date.now()}__`
-    const teed = `{ ${prefixed}; } 2>&1 | tee -a ${shQuote(logFile)}; printf '%s\\n' '${exitMarker}' >> ${shQuote(logFile)}`
+    const script = paneScript(key, prefixed)
+    const teed = `{ bash ${shQuote(script)}; } 2>&1 | tee -a ${shQuote(logFile)}; printf '%s\\n' '${exitMarker}' >> ${shQuote(logFile)}`
     execFileSync('herdr', ['pane', 'run', res.root_pane.pane_id, teed], { stdio: 'ignore', timeout: HERDR_TIMEOUT_MS })
     discardPlaceholder(ws)
     const shellPid = paneProcessInfo(res.root_pane.pane_id)?.shell_pid
@@ -132,10 +141,11 @@ export function start(
   }
 }
 
-export function rerunIn(ref: TProcRef, env: Record<string, string>, command: string): void {
+export function rerunIn(ref: TProcRef, env: Record<string, string>, command: string, key?: string): void {
   const prefixed = `${envExports(env)}${command}`
   if (ref.paneId) {
-    const wrapped = ref.logFile ? `{ ${prefixed}; } 2>&1 | tee -a ${shQuote(ref.logFile)}` : prefixed
+    const script = paneScript(key ?? ref.paneId, prefixed)
+    const wrapped = ref.logFile ? `{ bash ${shQuote(script)}; } 2>&1 | tee -a ${shQuote(ref.logFile)}` : `bash ${shQuote(script)}`
     execFileSync('herdr', ['pane', 'run', ref.paneId, wrapped], { stdio: 'ignore', timeout: HERDR_TIMEOUT_MS })
   }
 }
