@@ -205,7 +205,7 @@ async function ensureStack(
     }
     out(colors.yellow(`~ ${key}: runner exists but the service is down - restarting`))
     if (refFromTab.paneId) {
-      rerunIn(refFromTab, startEnv, startCmd)
+      rerunIn(refFromTab, startEnv, startCmd, key)
       const port = fixed ? plan.port : await discoverPort(plan.name)
       if (port !== null) refFromTab.port = port
       recordStack(refFromTab, port)
@@ -429,7 +429,7 @@ async function cmdUp(a: TArgs): Promise<void> {
       Object.entries(stackDef.services).flatMap(([repo, wt]) => [repo, ...sidecarsOf(repo)].map((svc) => `${svc}/${wt}`)),
     )
     for (const [key, entry] of Object.entries(state.stacks)) {
-      if (entry.stack !== stackDef.name || members.has(key) || isShared(entry.repo)) continue
+      if (entry.stack !== stackDef.name || isShared(entry.repo) || members.has(`${entry.repo}/${entry.worktree}`)) continue
       out(colors.yellow(`~ ${key}: dropped from stack ${stackDef.name} - stopping`))
       stopRunningEntry(state, key, force)
     }
