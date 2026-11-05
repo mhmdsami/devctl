@@ -92,19 +92,24 @@ export interface TRoute {
   kind: string
 }
 
-export function listRoutes(): TRoute[] {
+export function parseRoutesOutput(out: string): TRoute[] {
   const routes: TRoute[] = []
-  const bin = portlessBin()
-  if (bin) {
-    try {
-      const out = execFileSync(bin, ['list'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5_000 }).replace(/\x1b\[[0-9;]*m/g, '')
-      for (const match of out.matchAll(/https?:\/\/(\S+)\s+->\s+localhost:(\d+)(?:\s+\(([^)]+)\))?/g)) {
-        routes.push({ host: match[1], port: Number(match[2]), kind: match[3] ?? 'app' })
-      }
-    } catch {
-    }
+  const clean = out.replace(/\x1b\[[0-9;]*m/g, '')
+  for (const match of clean.matchAll(/https?:\/\/([^\s:]+)(?::\d+)?\s+->\s+localhost:(\d+)(?:\s+\(([^)]+)\))?/g)) {
+    routes.push({ host: match[1], port: Number(match[2]), kind: match[3] ?? 'app' })
   }
   return routes
+}
+
+export function listRoutes(): TRoute[] {
+  const bin = portlessBin()
+  if (!bin) return []
+  try {
+    const out = execFileSync(bin, ['list'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5_000 })
+    return parseRoutesOutput(out)
+  } catch {
+    return []
+  }
 }
 
 export function routePort(name: string): number | null {
