@@ -2,7 +2,7 @@ const PATH_DIRS = ['/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin', '/
 const pathEntries = (process.env.PATH ?? '').split(':').filter(Boolean)
 process.env.PATH = [...PATH_DIRS, ...pathEntries.filter((d) => !PATH_DIRS.includes(d))].join(':')
 
-import { closeWorkspaceByLabel, findRefByLabel, focusTab, focusWorkspace, refAlive, refExited, refOutput, requireRunner, rerunIn, start, stopRef, sweepDevctlTabs } from './session'
+import { closeWorkspaceByLabel, ensureHerdrServer, findRefByLabel, focusTab, focusWorkspace, refAlive, refExited, refOutput, requireRunner, rerunIn, start, stopRef, sweepDevctlTabs } from './session'
 import { commandEnv, killTree, pidCwd, pidsListeningOnPort, processStartToken, shQuote, tcpAlive } from './process'
 import { loadConfig, repoDir, resolveConfigPath, usesFixedPort } from './config'
 import { validateConfig } from './validate'
@@ -372,6 +372,7 @@ async function cmdUp(a: TArgs): Promise<void> {
     refreshSessions(state)
     saveState(state)
   } catch {}
+  if (ensureHerdrServer()) out(colors.yellow('~ herdr server was not running - started it'))
   requirePortless()
   await ensureProxy()
   const target = a.positionals[0]

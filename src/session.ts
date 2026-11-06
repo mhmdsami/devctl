@@ -342,6 +342,27 @@ export function requireRunner(): void {
   }
 }
 
+function herdrServerRunning(): boolean {
+  try {
+    const out = execFileSync('herdr', ['status'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5_000 })
+    return /status:\s*running/.test(out)
+  } catch {
+    return false
+  }
+}
+
+export function ensureHerdrServer(): boolean {
+  if (!herdrEnabled() || herdrServerRunning()) return false
+  const child = spawn('herdr', ['server'], { detached: true, stdio: 'ignore' })
+  child.on('error', () => {})
+  child.unref()
+  for (let i = 0; i < 150; i++) {
+    if (herdrServerRunning()) return true
+    sleepSync(100)
+  }
+  throw new Error('herdr server is not running and did not start - run `herdr server`')
+}
+
 export function findRefByLabel(workspaceId: string | undefined, label: string, port?: number, cwd?: string): TProcRef | null {
   if (!herdrEnabled() || !workspaceId) return null
   const tabs = listTabs(workspaceId).filter((t) => t.label === label)
