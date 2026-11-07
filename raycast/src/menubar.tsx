@@ -141,7 +141,7 @@ function MenubarView() {
               onAction={async () => {
                 const confirmed = await confirmAlert({
                   title: `Delete ${row.title}?`,
-                  message: 'Stops the stack, removes it from devctl, and deletes its worktrees. Branches are kept.',
+                  message: 'Stops the stack, removes it from devctl, deletes its worktrees, and removes its logs. Branches are kept.',
                   icon: Icon.Trash,
                 })
                 if (confirmed) await withToast(`Deleting ${row.title}`, ['stack', 'delete', row.id, '--yes'], reload)

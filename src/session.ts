@@ -1,5 +1,6 @@
 import { execFileSync, spawn } from 'child_process'
 import fs from 'fs'
+import path from 'path'
 import { loadConfig } from './config'
 import { envExports, killTree, ownedPidsOnPort, pidCwd, pidsListeningOnPort, processMatches, processStartToken, shQuote } from './process'
 import { sleepSync } from './util'
@@ -109,12 +110,22 @@ function rotateLog(file: string): boolean {
   return true
 }
 
+function scriptFileFor(key: string): string {
+  return `${process.env.HOME}/.devctl/scripts/${key.replace(/\//g, '__')}.sh`
+}
+
 function paneScript(key: string, body: string): string {
-  const dir = `${process.env.HOME}/.devctl/scripts`
-  fs.mkdirSync(dir, { recursive: true })
-  const file = `${dir}/${key.replace(/\//g, '__')}.sh`
+  const file = scriptFileFor(key)
+  fs.mkdirSync(path.dirname(file), { recursive: true })
   fs.writeFileSync(file, `${body}\n`)
   return file
+}
+
+export function removeSessionFiles(key: string, logFile?: string): void {
+  const log = logFile ?? logFileFor(key)
+  fs.rmSync(log, { force: true })
+  fs.rmSync(`${log}.1`, { force: true })
+  fs.rmSync(scriptFileFor(key), { force: true })
 }
 
 export function start(

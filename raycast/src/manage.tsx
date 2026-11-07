@@ -105,7 +105,7 @@ function ManageView() {
                       onAction={async () => {
                         const confirmed = await confirmAlert({
                           title: `Delete ${view.title}?`,
-                          message: 'This stops the stack, removes it from devctl, and deletes its worktrees. Branches are kept.',
+                          message: 'This stops the stack, removes it from devctl, deletes its worktrees, and removes its logs. Branches are kept.',
                           icon: Icon.Trash,
                         })
                         if (confirmed) await withToast(`Deleting ${view.title}`, ['stack', 'delete', stack.name, '--yes'], reload)
