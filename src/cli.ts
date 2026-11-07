@@ -834,9 +834,19 @@ async function cmdStatus(a: TArgs): Promise<void> {
   )
 
   if (json) {
+    const sharedServices = await Promise.all(
+      Object.entries(loadConfig().services)
+        .filter(([, svc]) => svc.shared)
+        .map(async ([name, svc]) => ({
+          name,
+          key: `${name}/head`,
+          port: svc.basePort,
+          running: await tcpAlive(svc.basePort),
+        })),
+    )
     console.log(
       JSON.stringify(
-        { env: state.env, targets: state.targets, stacks: rows },
+        { env: state.env, targets: state.targets, stacks: rows, sharedServices },
         null,
         2,
       ),
