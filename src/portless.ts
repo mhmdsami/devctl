@@ -101,15 +101,32 @@ export function parseRoutesOutput(out: string): TRoute[] {
   return routes
 }
 
+let cachedRoutes: TRoute[] | null = null
+let cachedRoutesAt = 0
+const ROUTES_TTL_MS = 1_000
+
+export function invalidateRoutes(): void {
+  cachedRoutes = null
+  cachedRoutesAt = 0
+}
+
 export function listRoutes(): TRoute[] {
+  const now = Date.now()
+  if (cachedRoutes !== null && now - cachedRoutesAt < ROUTES_TTL_MS) return cachedRoutes
   const bin = portlessBin()
-  if (!bin) return []
+  if (!bin) {
+    cachedRoutes = []
+    cachedRoutesAt = now
+    return cachedRoutes
+  }
   try {
     const out = execFileSync(bin, ['list'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5_000 })
-    return parseRoutesOutput(out)
+    cachedRoutes = parseRoutesOutput(out)
   } catch {
-    return []
+    cachedRoutes = []
   }
+  cachedRoutesAt = now
+  return cachedRoutes
 }
 
 export function routePort(name: string): number | null {
@@ -130,6 +147,7 @@ export function alias(name: string, port: number): boolean {
   if (!bin) return false
   try {
     execFileSync(bin, ['alias', name, String(port)], { stdio: 'ignore', timeout: 10_000 })
+    invalidateRoutes()
     return true
   } catch {
     return false
@@ -141,6 +159,7 @@ export function removeAlias(name: string): boolean {
   if (!bin) return false
   try {
     execFileSync(bin, ['alias', '--remove', name], { stdio: 'ignore', timeout: 10_000 })
+    invalidateRoutes()
     return true
   } catch {
     return false
