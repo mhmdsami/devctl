@@ -5,7 +5,7 @@ export interface TStacksData {
   stacks: TStackInfo[]
 }
 
-export function useStacks(intervalMs = 3_000) {
+export function useStacks(intervalMs = 10_000) {
   const result = usePollingValue<TStacksData>(stacksJson, { intervalMs })
   return {
     stacks: result.data,

@@ -1,7 +1,7 @@
 import { statusJson, type TStackStatus } from './devctl'
 import { usePollingValue } from './usePollingValue'
 
-export function useDevctlStatus(intervalMs = 5_000) {
+export function useDevctlStatus(intervalMs = 10_000) {
   const result = usePollingValue<TStackStatus>(statusJson, { intervalMs })
   return {
     status: result.data,
