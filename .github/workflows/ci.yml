@@ -34,3 +34,4 @@ jobs:
           cache-dependency-path: raycast/package-lock.json
       - run: npm ci
       - run: npx tsc --noEmit
+      - run: npx ray build -e dist -o dist --non-interactive --exit-on-error
