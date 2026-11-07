@@ -26,6 +26,8 @@ declare namespace Preferences {
   export type CreateStack = ExtensionPreferences & {}
   /** Preferences accessible in the `switch-env` command */
   export type SwitchEnv = ExtensionPreferences & {}
+  /** Preferences accessible in the `agents` command */
+  export type Agents = ExtensionPreferences & {}
 }
 
 declare namespace Arguments {
@@ -37,5 +39,7 @@ declare namespace Arguments {
   export type CreateStack = {}
   /** Arguments passed to the `switch-env` command */
   export type SwitchEnv = {}
+  /** Arguments passed to the `agents` command */
+  export type Agents = {}
 }
 
