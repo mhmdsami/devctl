@@ -31,6 +31,10 @@ worktrees, wired together by a dependency graph declared in `devctl.config.json`
   commands, URLs, and model or provider names come from `devctl.config.json` or state. Code
   depends only on generic concepts: repo, worktree, shared, sidecar, target. Help text and
   examples use neutral names such as `api`, `web`, or `database`, never a real service.
+- Never modify an installed Raycast extension. Do not copy, edit, or delete files under
+  `~/.config/raycast/extensions/<uuid>`; Raycast verifies store entry points by digest and will
+  report them as corrupted. Use `npm run dev` in `raycast/` for local builds. Ship lasting
+  changes through `.github/workflows/release.yml`, never by hand.
 - Targets are worktree names, `head`, `test`, or `prod` - never branch names. A worktree's
   checked-out branch may change; its name may not.
 - Only kill processes devctl started (ownership via pid + start token). Unowned port
