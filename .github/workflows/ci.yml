@@ -1,11 +1,10 @@
 name: ci
 
 on:
-  push:
-  pull_request:
+  workflow_dispatch:
 
 jobs:
-  cli:
+  gate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -17,21 +16,5 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm typecheck
-      - run: pnpm test
-
-  raycast:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: raycast
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: raycast/package-lock.json
-      - run: npm ci
-      - run: npx tsc --noEmit
-      - run: npx ray build -e dist -o dist --non-interactive --exit-on-error
+      - run: npm ci --prefix raycast
+      - run: pnpm gate

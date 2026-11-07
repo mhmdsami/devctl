@@ -7,6 +7,10 @@ import { assignSlots, createWorktree, removeWorktree, slotPort } from './registr
 import { setOverride, unsetOverride } from './envOverrides'
 import { resolveEnv } from './stacks'
 
+for (const key of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR', 'GIT_PREFIX']) {
+  delete process.env[key]
+}
+
 if (!process.env.DEVCTL_WORKTREES_ROOT) {
   throw new Error('graph.test.ts needs DEVCTL_WORKTREES_ROOT set (use `npm test`)')
 }

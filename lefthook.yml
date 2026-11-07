@@ -1,0 +1,4 @@
+pre-commit:
+  commands:
+    gate:
+      run: npm run gate
