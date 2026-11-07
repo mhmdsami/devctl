@@ -24,9 +24,9 @@ export default function Menubar() {
 }
 
 function MenubarView() {
-  const { status, error: statusError, isLoading, reload: reloadStatus } = useDevctlStatus(5_000)
-  const { stacks, error: stacksError, reload: reloadStacks } = useStacks(15_000)
-  const { portless, error: portlessError } = usePortless(15_000)
+  const { status, error: statusError, isLoading, reload: reloadStatus } = useDevctlStatus(10_000)
+  const { stacks, error: stacksError, reload: reloadStacks } = useStacks(30_000)
+  const { portless, error: portlessError } = usePortless(30_000)
   const rows = (stacks?.stacks ?? []).map((stack) => stackView(stack, status))
   const failed = rows.filter((row) => row.state === 'failed').length
   const starting = rows.filter((row) => row.state === 'starting').length
@@ -151,6 +151,46 @@ function MenubarView() {
         ))}
         {rows.length === 0 && <MenuBarExtra.Item title="No stacks. Open Manage Stack to create one." />}
       </MenuBarExtra.Section>
+      {(status?.sharedServices ?? []).length > 0 && (
+        <MenuBarExtra.Section title="Shared services">
+          {(status?.sharedServices ?? []).map((service) => {
+            const title = service.name.charAt(0).toUpperCase() + service.name.slice(1)
+            return (
+              <MenuBarExtra.Submenu
+                key={service.name}
+                icon={stateIcon(service.running ? 'ready' : 'stopped')}
+                title={`${title} · ${service.running ? 'running' : 'stopped'}`}
+              >
+                {service.running ? (
+                  <MenuBarExtra.Item
+                    icon={Icon.Stop}
+                    title={`Stop ${title}`}
+                    onAction={() => withToast(`Stopping ${service.name}`, ['down', service.key], reload)}
+                  />
+                ) : (
+                  <MenuBarExtra.Item
+                    icon={Icon.Play}
+                    title={`Start ${title}`}
+                    onAction={() => withToast(`Starting ${service.name}`, ['up', service.key], reload)}
+                  />
+                )}
+                <MenuBarExtra.Item
+                  icon={Icon.Document}
+                  title="Copy Recent Logs"
+                  onAction={async () => {
+                    try {
+                      await Clipboard.copy(await serviceLogs(service.key))
+                      await toastSafely({ style: Toast.Style.Success, title: `${title} logs copied` })
+                    } catch (cause) {
+                      await toastSafely({ style: Toast.Style.Failure, title: 'Unable to read logs', message: cause instanceof Error ? cause.message : String(cause) })
+                    }
+                  }}
+                />
+              </MenuBarExtra.Submenu>
+            )
+          })}
+        </MenuBarExtra.Section>
+      )}
       <MenuBarExtra.Section title="Environment">
         <MenuBarExtra.Submenu icon={Icon.Globe} title={`Environment: ${status?.env ?? 'Loading…'}`}>
           {(['test', 'prod'] as const).map((environment) => (

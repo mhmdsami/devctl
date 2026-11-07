@@ -1,6 +1,6 @@
 import { ActionPanel, Clipboard, confirmAlert, Icon, List, showHUD, Toast, useNavigation } from '@raycast/api'
 import { useEffect, useState } from 'react'
-import { devctlVersion, run, statusJson } from './lib/devctl'
+import { devctlVersion, run, serviceLogs, statusJson } from './lib/devctl'
 import { toastSafely, withToast } from './lib/actions'
 import { ErrorBoundary } from './lib/ErrorBoundary'
 import { useDevctlStatus } from './lib/useDevctlStatus'
@@ -49,6 +49,7 @@ function ManageView() {
 
   const views = (stacks?.stacks ?? []).map((stack) => ({ stack, view: stackView(stack, status) }))
   views.sort((a, b) => STATE_RANK[a.view.state] - STATE_RANK[b.view.state])
+  const sharedServices = status?.sharedServices ?? []
 
   return (
     <List isLoading={isLoading} searchBarPlaceholder="Search stacks…">
@@ -147,6 +148,55 @@ function ManageView() {
           )
         })}
       </List.Section>
+      {sharedServices.length > 0 && (
+        <List.Section title="Shared services">
+          {sharedServices.map((service) => {
+            const title = service.name.charAt(0).toUpperCase() + service.name.slice(1)
+            return (
+              <List.Item
+                key={service.name}
+                icon={service.running ? { source: Icon.CircleFilled, tintColor: '#34c759' } : Icon.Circle}
+                title={title}
+                subtitle={`Shared service on ${service.port}`}
+                accessories={[{ text: service.running ? 'Running' : 'Stopped' }]}
+                actions={
+                  <ActionPanel>
+                    <ActionPanel.Section title={title}>
+                      {service.running ? (
+                        <ActionPanel.Item
+                          title={`Stop ${title}`}
+                          icon={Icon.Stop}
+                          shortcut={{ modifiers: ['cmd'], key: 's' }}
+                          onAction={() => withToast(`Stopping ${service.name}`, ['down', service.key], reload)}
+                        />
+                      ) : (
+                        <ActionPanel.Item
+                          title={`Start ${title}`}
+                          icon={Icon.Play}
+                          shortcut={{ modifiers: ['cmd'], key: 's' }}
+                          onAction={() => withToast(`Starting ${service.name}`, ['up', service.key], reload)}
+                        />
+                      )}
+                      <ActionPanel.Item
+                        title="Copy Recent Logs"
+                        icon={Icon.CopyClipboard}
+                        onAction={async () => {
+                          try {
+                            await Clipboard.copy(await serviceLogs(service.key))
+                            await showHUD(`${title} logs copied`)
+                          } catch (cause) {
+                            await toastSafely({ style: Toast.Style.Failure, title: 'Unable to read logs', message: cause instanceof Error ? cause.message : String(cause) })
+                          }
+                        }}
+                      />
+                    </ActionPanel.Section>
+                  </ActionPanel>
+                }
+              />
+            )
+          })}
+        </List.Section>
+      )}
       <List.Section title="Actions">
         <List.Item
           icon={Icon.Plus}

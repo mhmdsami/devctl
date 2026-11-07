@@ -39,9 +39,17 @@ export interface TStackInfo {
   pinned: boolean
 }
 
+export interface TSharedService {
+  name: string
+  key: string
+  port: number
+  running: boolean
+}
+
 export interface TStackStatus {
   env: 'test' | 'prod'
   targets: Record<string, string>
+  sharedServices: TSharedService[]
   stacks: Array<
     TStackRunningMember & {
       repo: string
@@ -165,7 +173,12 @@ export function runLongCommand(args: string[]): Promise<string> {
 
 export async function statusJson(): Promise<TStackStatus> {
   const parsed = JSON.parse(await run(['status', '--json'])) as Partial<TStackStatus>
-  return { env: parsed.env ?? 'test', targets: parsed.targets ?? {}, stacks: Array.isArray(parsed.stacks) ? parsed.stacks : [] }
+  return {
+    env: parsed.env ?? 'test',
+    targets: parsed.targets ?? {},
+    sharedServices: Array.isArray(parsed.sharedServices) ? parsed.sharedServices : [],
+    stacks: Array.isArray(parsed.stacks) ? parsed.stacks : [],
+  }
 }
 
 export async function stacksJson(): Promise<{ stacks: TStackInfo[] }> {
