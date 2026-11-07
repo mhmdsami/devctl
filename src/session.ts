@@ -85,6 +85,30 @@ function logFileFor(key: string): string {
   return `${dir}/${key.replace(/\//g, '__')}.log`
 }
 
+const LOG_CAP_BYTES = 50 * 1024 * 1024
+const LOG_TAIL_BYTES = 1024 * 1024
+
+function rotateLog(file: string): boolean {
+  let size = 0
+  try {
+    size = fs.statSync(file).size
+  } catch {
+    return false
+  }
+  if (size <= LOG_CAP_BYTES) return false
+  const previous = `${file}.1`
+  try {
+    fs.rmSync(previous, { force: true })
+    fs.renameSync(file, previous)
+    const fd = fs.openSync(previous, 'r')
+    const tail = Buffer.alloc(LOG_TAIL_BYTES)
+    fs.readSync(fd, tail, 0, LOG_TAIL_BYTES, size - LOG_TAIL_BYTES)
+    fs.closeSync(fd)
+    fs.writeFileSync(previous, tail)
+  } catch {}
+  return true
+}
+
 function paneScript(key: string, body: string): string {
   const dir = `${process.env.HOME}/.devctl/scripts`
   fs.mkdirSync(dir, { recursive: true })
@@ -104,6 +128,7 @@ export function start(
 ): TProcRef {
   const prefixed = `${envExports(env)}${command}`
   const logFile = logFileFor(key)
+  rotateLog(logFile)
   const logOffset = fs.existsSync(logFile) ? fs.statSync(logFile).size : 0
   if (herdrEnabled() && !opts.detached) {
     const ws = herdrWorkspaceId(workspaceLabel)
@@ -145,6 +170,7 @@ export function rerunIn(ref: TProcRef, env: Record<string, string>, command: str
   const prefixed = `${envExports(env)}${command}`
   if (ref.paneId) {
     const script = paneScript(key ?? ref.paneId, prefixed)
+    if (ref.logFile && rotateLog(ref.logFile)) ref.logOffset = 0
     const wrapped = ref.logFile ? `{ bash ${shQuote(script)}; } 2>&1 | tee -a ${shQuote(ref.logFile)}` : `bash ${shQuote(script)}`
     execFileSync('herdr', ['pane', 'run', ref.paneId, wrapped], { stdio: 'ignore', timeout: HERDR_TIMEOUT_MS })
   }
