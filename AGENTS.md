@@ -27,6 +27,10 @@ worktrees, wired together by a dependency graph declared in `devctl.config.json`
 - No comments anywhere, including tests and config examples.
 - Never read or write the user's real `devctl.config.json` in tests; tests ship their own
   fixture via `DEVCTL_CONFIG`.
+- Nothing workflow-specific in code. Service names, repos, ports, worktrees, stack names,
+  commands, URLs, and model or provider names come from `devctl.config.json` or state. Code
+  depends only on generic concepts: repo, worktree, shared, sidecar, target. Help text and
+  examples use neutral names such as `api`, `web`, or `database`, never a real service.
 - Targets are worktree names, `head`, `test`, or `prod` - never branch names. A worktree's
   checked-out branch may change; its name may not.
 - Only kill processes devctl started (ownership via pid + start token). Unowned port
