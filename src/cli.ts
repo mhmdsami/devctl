@@ -1721,8 +1721,8 @@ const GLOBAL_USAGE = `usage: devctl <command>
   --version                      print devctl version
 
   Global flags: --no-color, --quiet. Every command accepts --help.
-  Shared services (e.g. mongo) have no worktrees: start/stop with devctl up <name> / down <name>,
-  or let the graph start them via dependsOn/wiring.`
+  Shared services (databases and other infra) have no worktrees: start/stop with
+  devctl up <name> / down <name>, or let the graph start them via dependsOn/wiring.`
 
 const HELP: Record<string, string> = {
   up: `usage: devctl up [stack | repo[/branch] | --all] [--force] [--dry-run] [--json] [--quiet]
@@ -1787,7 +1787,7 @@ const HELP: Record<string, string> = {
   config: `usage: devctl config show [--json] | config get <path> | config set <path> <value>
 
   show prints the resolved config with secret-looking values (KEY/TOKEN/SECRET/PASSWORD/DSN) redacted.
-  get/set use dotted paths, e.g. "debug.model" or "services.deimos.env.PORT".
+  get/set use dotted paths, e.g. "debug.model" or "services.api.env.PORT".
   set parses the value as JSON when possible (true/false/numbers), otherwise as a string.
   The config is validated before it is written; an invalid edit is rejected.`,
   context: `usage: devctl context [stack]
