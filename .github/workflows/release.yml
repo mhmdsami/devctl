@@ -12,7 +12,11 @@ on:
         default: "Bug fixes and improvements"
 
 jobs:
+  gate:
+    uses: ./.github/workflows/ci.yml
+
   release:
+    needs: gate
     runs-on: ubuntu-latest
     permissions:
       contents: write
