@@ -8,6 +8,14 @@ tags: development, tooling
 
 `devctl` runs local development services. The service graph comes from `DEVCTL_CONFIG`, or `devctl.config.jsonc` / `devctl.config.json` in the devctl installation. Each git worktree gets its own named URL (portless-owned) or port (fixed-port). A worktree name shared across services is a **stack**. Services run inside herdr tabs. Never kill tabs or ports yourself; devctl refuses to kill processes it doesn't own. portless is required.
 
+## Never do this
+
+- Do not create or remove worktrees with `git worktree`; use `devctl stack create` so ports, dependencies, and stack links stay tracked.
+- Do not symlink `node_modules` from another checkout. Let the worktree install its own dependencies, or report the gap.
+- Do not run `portless` directly, start a service on a raw port, or kill a process. Use `devctl up`, `down`, `restart`, and `status`.
+- Do not run `devctl kill` or `devctl down --all`. Ask before `--force`; it kills whatever holds the port.
+- Do not leave services or browsers running after the task unless the user asked you to.
+
 ## Read state first, act second
 
 ```sh
