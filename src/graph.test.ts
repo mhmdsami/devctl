@@ -84,7 +84,7 @@ const local = resolveWiring({ env: 'test', targets: { web: 'api/head' } }, 'web'
 assert.strictEqual(local.API_URL, 'http://localhost:3000/api')
 assert.strictEqual(local.SELF_URL, 'https://head.api.localhost')
 
-assert.strictEqual(local.SELF_ORIGIN, 'https://head.api.localhost')
+assert.strictEqual(local.SELF_ORIGIN, 'https://head.api.localhost:1355')
 
 const basePort = 6007
 const running = { 'espeon/ft-configurable-text-banner': 6017, 'espeon/ho-lfc-qa': 6018 }

@@ -6,7 +6,7 @@ import https from 'https'
 import os from 'os'
 import path from 'path'
 
-const { auditPortlessState, parseRoutesOutput } = await import('./portless')
+const { auditPortlessState, parseRoutesOutput, proxyPort } = await import('./portless')
 const { httpsReachable } = await import('./process')
 
 const out = [
@@ -32,6 +32,16 @@ assert.deepStrictEqual(
 )
 
 assert.deepStrictEqual(parseRoutesOutput(''), [], 'returns no routes for empty output')
+
+const portDir = fs.mkdtempSync(path.join(os.tmpdir(), 'devctl-portless-port-'))
+const previousStateDir = process.env.PORTLESS_STATE_DIR
+process.env.PORTLESS_STATE_DIR = portDir
+assert.strictEqual(proxyPort(), 1355, 'defaults to the devctl proxy port')
+fs.writeFileSync(path.join(portDir, 'proxy.port'), '9999\n')
+assert.strictEqual(proxyPort(), 9999, 'reads the active proxy port')
+if (previousStateDir === undefined) delete process.env.PORTLESS_STATE_DIR
+else process.env.PORTLESS_STATE_DIR = previousStateDir
+fs.rmSync(portDir, { recursive: true, force: true })
 
 const uid = process.getuid?.() ?? 0
 const state = fs.mkdtempSync(path.join(os.tmpdir(), 'devctl-portless-state-'))

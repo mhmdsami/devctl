@@ -143,7 +143,7 @@ export function proxyPort(): number {
     if (Number.isInteger(value) && value > 0) return value
   } catch {
   }
-  return 443
+  return DEVCTL_PROXY_PORT
 }
 
 export function namedUrl(name: string): string {
