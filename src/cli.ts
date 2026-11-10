@@ -3,7 +3,7 @@ const pathEntries = (process.env.PATH ?? '').split(':').filter(Boolean)
 process.env.PATH = [...PATH_DIRS, ...pathEntries.filter((d) => !PATH_DIRS.includes(d))].join(':')
 
 import { closeWorkspaceByLabel, ensureHerdrServer, findRefByLabel, focusTab, focusWorkspace, refAlive, refExited, refOutput, removeSessionFiles, requireRunner, rerunIn, start, stopRef, sweepDevctlTabs } from './session'
-import { commandEnv, killTree, pidCwd, pidsListeningOnPort, processStartToken, shQuote, tcpAlive } from './process'
+import { commandEnv, httpsReachable, killTree, pidCwd, pidsListeningOnPort, processStartToken, shQuote, tcpAlive } from './process'
 import { loadConfig, repoDir, resolveConfigPath, usesFixedPort } from './config'
 import { validateConfig } from './validate'
 import { createWorktree, isShared, removeWorktree, repoKeys as repoKeysFromRegistry, entryKey, findWorktree, listAllWorktrees, listWorktrees, parseTarget, resolveCwdTarget, type TRepoKey } from './registry'
@@ -12,7 +12,7 @@ import { loadState, saveState, STATE_FILE, STATE_VERSION, DEVCTL_DIR, reportStor
 import { depsOf, dependentsOf, hasWiring, planStack, providersOf, resolveEnv, sidecarsOf, type TStackPlan } from './stacks'
 import { overrideFile, setOverride, unsetOverride } from './envOverrides'
 import { discoverStacks, resolveStack, stackDeletePlan } from './stackRegistry'
-import { alias as portlessAlias, dnsName as portlessDnsName, ensureProxy, listRoutes, namedUrl, portlessAvailable, portlessBin, portlessProxyUp, portlessRunCommand, portlessRunName, proxyPort, removeAlias as portlessRemoveAlias, requirePortless, routePort, startProxy, stopProxy } from './portless'
+import { alias as portlessAlias, auditPortlessState, dnsName as portlessDnsName, ensureProxy, listRoutes, namedUrl, portlessAvailable, portlessBin, portlessProxyUp, portlessRunCommand, portlessRunName, proxyPort, removeAlias as portlessRemoveAlias, requirePortless, routePort, startProxy, stopProxy } from './portless'
 import { sleep, sleepSync, colors, setQuiet, out, quiet, setColorEnabled } from './util'
 import { parseArgs, flag, opt, positional, type TArgs, UsageError } from './args'
 import { tailFile } from './logtail'
@@ -56,12 +56,16 @@ function servicePort(value: number | null): number {
   return value ?? 0
 }
 
-async function stackStatus(stack: TStackState): Promise<{ alive: boolean; listening: boolean; detached: boolean; portlessUrl: string | null }> {
+async function stackStatus(
+  stack: TStackState,
+  checkTls = false,
+): Promise<{ alive: boolean; listening: boolean; detached: boolean; portlessUrl: string | null; proxyReachable: boolean | null }> {
   const listening = stack.port != null ? await tcpAlive(stack.port) : false
   const alive = isShared(stack.repo) ? listening : await tabAlive(stack)
   const detached = listening && !stack.ref.pid && !stack.ref.paneId
   const portlessLink = stack.portlessName && !isShared(stack.repo) && portlessAvailable() ? namedUrl(stack.portlessName) : null
-  return { alive, listening, detached, portlessUrl: portlessLink }
+  const proxyReachable = checkTls && portlessLink ? await httpsReachable(new URL(portlessLink).hostname, proxyPort()) : null
+  return { alive, listening, detached, portlessUrl: portlessLink, proxyReachable }
 }
 
 async function discoverPort(name: string, timeoutMs = 15_000): Promise<number | null> {
@@ -829,7 +833,7 @@ async function cmdStatus(a: TArgs): Promise<void> {
     Object.values(state.stacks).map(async (s) => ({
       ...s,
       stackLabel: s.stack ? state.stackDefs[s.stack]?.label : undefined,
-      ...(await stackStatus(s)),
+      ...(await stackStatus(s, check)),
     })),
   )
 
@@ -851,7 +855,7 @@ async function cmdStatus(a: TArgs): Promise<void> {
         2,
       ),
     )
-    if (check && rows.some((row) => !row.detached && (!row.alive || !row.listening))) process.exitCode = 1
+    if (check && rows.some((row) => !row.detached && (!row.alive || !row.listening || row.proxyReachable === false))) process.exitCode = 1
     return
   }
 
@@ -862,14 +866,16 @@ async function cmdStatus(a: TArgs): Promise<void> {
   for (const r of rows) {
     const status = r.detached
       ? colors.yellow('● detached')
-      : r.alive && r.listening
-        ? colors.green('● ready')
-        : r.alive
+      : !r.alive || !r.listening
+        ? r.alive
           ? colors.yellow('● starting')
           : colors.red('○ dead')
+        : r.proxyReachable === false
+          ? colors.red('○ proxy unreachable')
+          : colors.green('● ready')
     console.log(`${status} ${r.key.padEnd(50)} ${r.stackLabel ?? r.stack ?? ''} ${r.portlessUrl ?? r.url}`)
   }
-  if (check && rows.some((row) => !row.detached && (!row.alive || !row.listening))) process.exitCode = 1
+  if (check && rows.some((row) => !row.detached && (!row.alive || !row.listening || row.proxyReachable === false))) process.exitCode = 1
 }
 
 function cmdWhich(a: TArgs): void {
@@ -1184,6 +1190,7 @@ async function cmdDoctor(a: TArgs): Promise<void> {
       add('portless:routes', 'warn', `${missing.length} running service(s) without a route - re-run \`devctl up <stack>\` to re-register`)
     }
   }
+  for (const issue of auditPortlessState()) add(issue.name, issue.status, issue.detail)
 
   for (const [service, serviceConfig] of Object.entries(cfg.services)) {
     const dir = repoDir(service)

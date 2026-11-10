@@ -1,4 +1,5 @@
 import net from 'net'
+import https from 'https'
 import { execFileSync } from 'child_process'
 import { sleepSync } from './util'
 
@@ -130,6 +131,37 @@ export function tcpAlive(port: number, timeoutMs = 750): Promise<boolean> {
     socket.once('connect', () => done(true))
     socket.once('timeout', () => done(false))
     socket.once('error', () => done(false))
+  })
+}
+
+export function httpsReachable(host: string, port: number, timeoutMs = 3_000): Promise<boolean> {
+  return new Promise((resolve) => {
+    let settled = false
+    let request: ReturnType<typeof https.request> | null = null
+    const done = (ok: boolean) => {
+      if (settled) return
+      settled = true
+      request?.destroy()
+      resolve(ok)
+    }
+    request = https.request(
+      {
+        host,
+        port,
+        path: '/',
+        method: 'HEAD',
+        rejectUnauthorized: false,
+        timeout: timeoutMs,
+        ...(net.isIP(host) ? {} : { servername: host }),
+      },
+      (response) => {
+        response.resume()
+        done(true)
+      },
+    )
+    request.on('timeout', () => done(false))
+    request.on('error', () => done(false))
+    request.end()
   })
 }
 

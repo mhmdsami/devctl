@@ -20,6 +20,81 @@ export function caFile(): string {
 }
 export const DEVCTL_PROXY_PORT = 1355
 
+export interface TPortlessStateIssue {
+  name: string
+  status: 'error'
+  detail: string
+}
+
+function shortList(paths: string[], limit = 4): string {
+  const names = paths.map((entry) => path.basename(entry))
+  if (names.length <= limit) return names.join(', ')
+  return `${names.slice(0, limit).join(', ')}, +${names.length - limit} more`
+}
+
+export function auditPortlessState(dir = stateDir(), uid = process.getuid?.() ?? 0): TPortlessStateIssue[] {
+  const issues: TPortlessStateIssue[] = []
+  if (!fs.existsSync(dir)) return issues
+  const files: string[] = []
+  const collect = (folder: string): void => {
+    let entries: fs.Dirent[]
+    try {
+      entries = fs.readdirSync(folder, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const entry of entries) {
+      if (entry.isFile()) files.push(path.join(folder, entry.name))
+    }
+  }
+  collect(dir)
+  const hostCerts = path.join(dir, 'host-certs')
+  if (fs.existsSync(hostCerts)) collect(hostCerts)
+  const owned = [dir, hostCerts, ...files].filter((entry) => {
+    try {
+      return fs.statSync(entry).uid !== uid
+    } catch {
+      return false
+    }
+  })
+  const caSrl = path.join(dir, 'ca.srl')
+  const caSrlForeign = owned.includes(caSrl)
+  let caSrlWritable = false
+  try {
+    fs.accessSync(caSrl, fs.constants.W_OK)
+    caSrlWritable = true
+  } catch {}
+  if (owned.length > 0) {
+    issues.push({
+      name: 'portless:owner',
+      status: 'error',
+      detail: `${owned.length} path(s) not owned by you: ${shortList(owned)}${caSrlForeign && !caSrlWritable ? '; ca.srl is not writable, so certificate signing fails' : ''}. Fix: sudo chown -R $(id -u):$(id -g) ${shQuote(dir)}`,
+    })
+  } else if (fs.existsSync(caSrl) && !caSrlWritable) {
+    issues.push({
+      name: 'portless:ca-srl',
+      status: 'error',
+      detail: `${caSrl} is not writable, so certificate signing fails. Fix: chmod u+w ${shQuote(caSrl)}`,
+    })
+  }
+  const empty = files.filter((entry) => {
+    if (!entry.endsWith('.pem')) return false
+    try {
+      return fs.statSync(entry).size === 0
+    } catch {
+      return false
+    }
+  })
+  if (empty.length > 0) {
+    issues.push({
+      name: 'portless:certs',
+      status: 'error',
+      detail: `${empty.length} empty certificate(s): ${shortList(empty)}. Fix: after fixing ownership, remove them and restart the proxy: rm ${empty.map(shQuote).join(' ')} && devctl portless stop && devctl portless start`,
+    })
+  }
+  return issues
+}
+
 let cachedBin: string | null | undefined
 let cachedRunnable: boolean | undefined
 
