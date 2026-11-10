@@ -28,6 +28,6 @@
     "typescript": "^5.6.0"
   },
   "dependencies": {
-    "portless": "^0.15.8"
+    "portless": "^0.17.0"
   }
 }
